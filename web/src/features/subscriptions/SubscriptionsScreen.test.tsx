@@ -175,6 +175,21 @@ describe("SubscriptionsScreen", () => {
     expect(document.querySelector('img[src="data:image/png;base64,AAAA"]')).toBeInTheDocument();
   });
 
+  it("stacks a row and wraps its action buttons instead of squeezing four of them onto one cramped line on a narrow viewport", async () => {
+    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 } });
+    renderScreen();
+
+    const row = (await screen.findByText("Netflix")).closest("li")!;
+    // Stacks to a column on mobile, reverting to the original side-by-side
+    // row at `sm:` and up.
+    expect(row.className).toMatch(/\bflex-col\b/);
+    expect(row.className).toMatch(/\bsm:flex-row\b/);
+    // Renew / Edit / Cancel / Delete wrap as a cluster rather than forcing
+    // the row wider than the viewport.
+    const deleteButton = within(row).getByRole("button", { name: /delete/i });
+    expect(deleteButton.parentElement?.className).toMatch(/\bflex-wrap\b/);
+  });
+
   it("renews a subscription by advancing its renewal date", async () => {
     seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 } });
     renderScreen();

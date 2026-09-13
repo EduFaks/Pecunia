@@ -182,7 +182,15 @@ function AppShell() {
         </nav>
       </aside>
 
-      <div className="flex flex-1 flex-col">
+      {/* `min-w-0` overrides the flex item default of `min-width: auto`,
+          which otherwise refuses to shrink this column below its widest
+          descendant's intrinsic content width (a long unbroken string, an
+          unwrapped badge cluster, a chart) — without it, that descendant
+          quietly grows the whole page past the viewport instead of wrapping
+          or scrolling internally. This is the structural fix that lets every
+          screen's own `overflow-x-auto` tables / `flex-wrap` clusters /
+          `truncate` text actually take effect. */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-hairline bg-surface-1 px-4 py-3 md:px-6 md:py-4">
           <div className="flex items-center gap-3">
             <button
@@ -218,7 +226,7 @@ function AppShell() {
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
+        <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
           {/* One restrained entrance for the whole app: keying this wrapper on
               the pathname remounts it each navigation, replaying the quiet
               `.pc-reveal` fade (reduced-motion-safe, pure CSS) once per screen —

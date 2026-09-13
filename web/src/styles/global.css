@@ -65,6 +65,21 @@
     color-scheme: dark;
   }
 
+  html,
+  body {
+    /* Belt-and-suspenders against horizontal scroll: `AppShell`'s mobile nav
+       drawer is a `fixed`, `translate-x-full`-off-canvas `<aside>` when
+       closed — WebKit/Blink both count a `fixed` element's transformed
+       position toward the *document's* scrollable overflow even though it's
+       out of normal flow, so without this the closed drawer alone makes
+       every screen ~256px horizontally scrollable on a narrow viewport. The
+       real per-screen fix is still each layout not growing wider than the
+       viewport in the first place (`AppShell`'s content column carries
+       `min-w-0` for exactly that); this is the safety net for anything else
+       that slips through, never a substitute for it.  */
+    overflow-x: hidden;
+  }
+
   body {
     background: var(--pc-canvas);
     color: var(--pc-text);
@@ -100,6 +115,22 @@
       transition-duration: 0.01ms !important;
       transition-delay: 0ms !important;
       scroll-behavior: auto !important;
+    }
+  }
+
+  /* iOS Safari auto-zooms the viewport when a focused form control's
+     font-size is below 16px, and (unlike a pinch-zoom the user initiates)
+     never zooms back out on blur. Every text-entry control already asks for
+     16px on mobile via `text-base sm:text-sm` (see `textFieldInputClasses`),
+     but this is the catch-all for any raw control that doesn't route through
+     a shared primitive — belt-and-suspenders, not a substitute for fixing
+     the primitive. Desktop keeps its normal 14px via the component classes;
+     this only forces the floor below the `sm` breakpoint. */
+  @media (max-width: 639px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
     }
   }
 }

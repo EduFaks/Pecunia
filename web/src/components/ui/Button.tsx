@@ -32,7 +32,12 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-xs gap-1.5",
+  // `py-2.5` (not the desktop `py-1.5`) below `sm:` brings `sm`'s total
+  // height to ~36px — a comfortable touch target — on a phone, where `sm`
+  // is the size every dense row's actions (transactions, subscriptions,
+  // loans, planned) use; `sm:py-1.5` reverts to the original compact
+  // desktop sizing unchanged.
+  sm: "px-3 py-2.5 sm:py-1.5 text-xs gap-1.5",
   md: "px-4 py-2 text-sm gap-2",
   lg: "px-5 py-2.5 text-sm gap-2",
 };

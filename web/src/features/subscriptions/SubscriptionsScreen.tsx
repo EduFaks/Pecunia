@@ -193,7 +193,10 @@ function SubscriptionsScreen() {
             const contact = contactFor(subscription.contact_id);
             const category = categoryFor(subscription.category_id);
             return (
-              <li key={subscription.id} className="flex items-center justify-between gap-4 px-4 py-3">
+              <li
+                key={subscription.id}
+                className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+              >
                 <div className={cn("flex min-w-0 items-center gap-3", isCanceled && "opacity-60")}>
                   <Avatar src={subscription.logo} name={subscription.name} size="lg" />
                   <div className="flex min-w-0 flex-col gap-1">
@@ -218,7 +221,7 @@ function SubscriptionsScreen() {
                     ) : null}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
                   {!isCanceled ? (
                     <Button
                       variant="ghost"
