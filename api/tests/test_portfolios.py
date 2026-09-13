@@ -23,10 +23,14 @@ async def _portfolio(client, h, **overrides):
     return (await client.post("/api/v1/portfolios", json=body, headers=h)).json()
 
 
-async def _holding(client, h, portfolio_id, *, quantity="1", name="Fund", symbol=None):
+async def _holding(
+    client, h, portfolio_id, *, quantity="1", name="Fund", symbol=None, coingecko_id=None
+):
     body = {"name": name, "quantity": quantity}
     if symbol is not None:
         body["symbol"] = symbol
+    if coingecko_id is not None:
+        body["coingecko_id"] = coingecko_id
     return (
         await client.post(f"/api/v1/portfolios/{portfolio_id}/holdings", json=body, headers=h)
     ).json()
@@ -280,6 +284,18 @@ async def test_record_price_then_value(client, initialized_instance):
     ).json()
     assert got["latest_unit_price_minor"] == 1000
     assert got["value_minor"] == 1500  # round(1.5 * 1000)
+    assert got["latest_price_source"] == "manual"
+    assert got["latest_price_as_of"] == "2026-06-01"
+
+
+async def test_holding_out_latest_price_fields_are_null_with_no_price_recorded(
+    client, initialized_instance
+):
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    holding = await _holding(client, h, p["id"], quantity="1")
+    assert holding["latest_price_source"] is None
+    assert holding["latest_price_as_of"] is None
 
 
 async def test_portfolio_value_is_sum_of_holdings(client, initialized_instance):
@@ -468,3 +484,51 @@ async def test_portfolio_value_minor_sums_holdings(db, initialized_instance):
     await _svc_price(db, ws_id, h2, unit_price_minor=6_000_000, as_of=date(2026, 6, 1))
     assert await PortfolioService(db).portfolio_value_minor(p) == 1500 + 900_000
     _ = h3
+
+
+async def test_latest_price_returns_the_full_row(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    p = await _svc_portfolio(db, ws_id)
+    hd = await _svc_holding(db, ws_id, p, quantity="1")
+    assert await PortfolioService(db).latest_price(hd) is None
+    await _svc_price(db, ws_id, hd, unit_price_minor=1000, as_of=date(2026, 1, 1))
+    await _svc_price(db, ws_id, hd, unit_price_minor=1500, as_of=date(2026, 6, 1))
+    latest = await PortfolioService(db).latest_price(hd)
+    assert latest.unit_price_minor == 1500
+    assert latest.as_of == date(2026, 6, 1)
+    earlier = await PortfolioService(db).latest_price(hd, on_date=date(2026, 3, 1))
+    assert earlier.unit_price_minor == 1000
+
+
+# --------------------------------------------------------------------------- #
+# Crypto price sync — POST /portfolios/refresh-prices (Task 3, Track Q)
+# --------------------------------------------------------------------------- #
+
+
+async def test_refresh_prices_requires_auth(client, initialized_instance):
+    resp = await client.post("/api/v1/portfolios/refresh-prices")
+    assert resp.status_code == 401
+
+
+async def test_refresh_prices_endpoint_uses_the_injected_provider(
+    client, app, initialized_instance
+):
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    holding = await _holding(client, h, p["id"], quantity="0.5", coingecko_id="bitcoin")
+
+    fake = FakePriceProvider(prices_by_currency={"USD": {"bitcoin": 6_500_000}})
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.post("/api/v1/portfolios/refresh-prices", headers=h)
+    assert resp.status_code == 200
+    assert resp.json() == {"updated": 1, "skipped": 0, "errors": []}
+
+    got = (
+        await client.get(f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}", headers=h)
+    ).json()
+    assert got["latest_unit_price_minor"] == 6_500_000
+    assert got["latest_price_source"] == "coingecko"

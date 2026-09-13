@@ -278,6 +278,27 @@ class PortfolioService:
             .limit(1)
         )
 
+    async def latest_price(
+        self, holding: Holding, *, on_date: date | None = None
+    ) -> HoldingPrice | None:
+        """The full latest-price row for `holding` — same latest/`on_date`/
+        tiebreak semantics as `latest_unit_price`, for callers that also need
+        `source`/`as_of` (the price-provenance badge), not just the minor-unit
+        int."""
+        conds = [HoldingPrice.holding_id == holding.id]
+        if on_date is not None:
+            conds.append(HoldingPrice.as_of <= on_date)
+        return await self.db.scalar(
+            select(HoldingPrice)
+            .where(*conds)
+            .order_by(
+                HoldingPrice.as_of.desc(),
+                HoldingPrice.created_at.desc(),
+                HoldingPrice.id.desc(),
+            )
+            .limit(1)
+        )
+
     async def record_price(
         self,
         holding: Holding,
