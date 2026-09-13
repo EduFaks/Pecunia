@@ -2,15 +2,24 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
+import { focusRingClass } from "../../components/ui/a11y";
+import { FieldError, FieldLabel } from "../../components/ui/Field";
 import Select from "../../components/ui/Select";
 import type { SelectOption } from "../../components/ui/Select";
 import TextField from "../../components/ui/TextField";
+import { textFieldInputClasses } from "../../components/ui/TextField";
+import { amountToMinor } from "../../lib/amount";
+import { cn } from "../../lib/cn";
 import { CURRENCY_CODES } from "../setup/CurrencySelect";
 import { ASSET_TYPE_OPTIONS } from "./assetTypes";
 import { useCreateAsset, useUpdateAsset } from "./useAssets";
 import type { AssetOut, AssetType } from "./useAssets";
 
 const CURRENCY_OPTIONS: SelectOption[] = CURRENCY_CODES.map((code) => ({ value: code, label: code }));
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export interface AssetFormProps {
   /** Presence switches the form into edit mode (PATCH, prefilled fields).
@@ -32,8 +41,16 @@ function assetErrorMessage(): string {
 
 /**
  * Create/edit form for one asset: name, type, currency, and an optional
- * acquired-on date. Used both as `AssetsScreen`'s "New asset"/"Edit" panel
- * and `AssetDetail`'s inline edit panel.
+ * acquired-on date. Create mode also offers an optional "Current value" +
+ * "As of" pair, recorded as the asset's first valuation on the backend
+ * (`AssetIn.value_minor`/`as_of`) — the same money-input shape as
+ * `ValuationForm`'s "Add valuation" panel, so a newly created asset can show
+ * a value immediately instead of "—" until its detail page gets one. Edit
+ * mode omits it entirely: ongoing value updates live on the asset detail
+ * page's valuation history, not here.
+ *
+ * Used both as `AssetsScreen`'s "New asset"/"Edit" panel and `AssetDetail`'s
+ * inline edit panel.
  */
 function AssetForm({ asset, defaultCurrency, onSuccess, onCancel }: AssetFormProps) {
   const isEdit = asset !== undefined;
@@ -44,6 +61,9 @@ function AssetForm({ asset, defaultCurrency, onSuccess, onCancel }: AssetFormPro
     asset?.currency ?? (defaultCurrency && CURRENCY_CODES.includes(defaultCurrency) ? defaultCurrency : CURRENCY_CODES[0]),
   );
   const [acquiredOn, setAcquiredOn] = useState(asset?.acquired_on ?? "");
+  const [value, setValue] = useState("");
+  const [asOf, setAsOf] = useState(todayIsoDate());
+  const [amountError, setAmountError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const createAsset = useCreateAsset();
@@ -57,6 +77,7 @@ function AssetForm({ asset, defaultCurrency, onSuccess, onCancel }: AssetFormPro
       return;
     }
     setError(null);
+    setAmountError(null);
 
     try {
       if (isEdit) {
@@ -69,11 +90,23 @@ function AssetForm({ asset, defaultCurrency, onSuccess, onCancel }: AssetFormPro
         onSuccess(updated);
         return;
       }
+
+      let initialValue: { value_minor: number; as_of: string } | null = null;
+      if (value.trim() !== "") {
+        const valueMinor = amountToMinor(value, currency);
+        if (valueMinor === null) {
+          setAmountError("Enter a valid amount.");
+          return;
+        }
+        initialValue = { value_minor: valueMinor, as_of: asOf };
+      }
+
       const created = await createAsset.mutateAsync({
         name: trimmedName,
         type,
         currency,
         ...(acquiredOn ? { acquired_on: acquiredOn } : {}),
+        ...(initialValue ?? {}),
       });
       onSuccess(created);
     } catch {
@@ -113,6 +146,41 @@ function AssetForm({ asset, defaultCurrency, onSuccess, onCancel }: AssetFormPro
         value={acquiredOn}
         onChange={(event) => setAcquiredOn(event.target.value)}
       />
+
+      {!isEdit ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel htmlFor="asset-form-value">Current value</FieldLabel>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
+                {currency}
+              </span>
+              <input
+                id="asset-form-value"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                aria-invalid={amountError ? true : undefined}
+                aria-describedby={amountError ? "asset-form-value-error" : undefined}
+                className={cn(
+                  textFieldInputClasses,
+                  amountError ? "border-negative/50" : "border-hairline focus:border-hairline-strong",
+                  focusRingClass,
+                )}
+              />
+            </div>
+            {amountError ? <FieldError id="asset-form-value-error">{amountError}</FieldError> : null}
+          </div>
+          <TextField
+            label="As of"
+            description="Optional — leave the value blank to add one later."
+            type="date"
+            value={asOf}
+            onChange={(event) => setAsOf(event.target.value)}
+          />
+        </div>
+      ) : null}
 
       {error ? <Callout variant="negative">{error}</Callout> : null}
 

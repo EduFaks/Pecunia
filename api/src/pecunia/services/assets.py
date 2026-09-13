@@ -18,6 +18,13 @@ from pecunia.services.scoping import get_scoped, scoped_select
 UNSET = object()
 
 
+class ValuationAsOfRequiredError(Exception):
+    """Raised by `create` when `value_minor` is given without `as_of` — an
+    initial valuation needs a date, and the service stays clock-free
+    (CONVENTIONS: no reading the clock in services), so it can't default to
+    "today" itself."""
+
+
 class AssetService:
     """Asset + asset valuation business logic. Contract: methods flush, never
     commit — the caller (router) owns the transaction boundary (CONVENTIONS §2)."""
@@ -33,7 +40,11 @@ class AssetService:
         type: str,
         currency: str,
         acquired_on: date | None = None,
+        value_minor: int | None = None,
+        as_of: date | None = None,
     ) -> Asset:
+        if value_minor is not None and as_of is None:
+            raise ValuationAsOfRequiredError()
         asset = Asset(
             id=uuid.uuid4(),
             workspace_id=workspace_id,
@@ -56,6 +67,9 @@ class AssetService:
                 activity_params={"name": asset.name, "type": asset.type},
             ),
         )
+        if value_minor is not None:
+            # as_of is guaranteed non-None by the check above.
+            await self.add_valuation(asset, value_minor=value_minor, as_of=as_of)  # type: ignore[arg-type]
         return asset
 
     async def list(

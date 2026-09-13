@@ -41,6 +41,35 @@ async def test_create_asset_with_acquired_on(client, initialized_instance):
     assert resp.json()["acquired_on"] == "2020-05-01"
 
 
+async def test_create_asset_with_initial_value_records_first_valuation(client, initialized_instance):
+    h = await _auth(client)
+    resp = await client.post(
+        "/api/v1/assets",
+        json=NEW | {"value_minor": 4000000, "as_of": "2026-01-01"},
+        headers=h,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["current_value_minor"] == 4000000
+    assert body["currency"] == "BRL"
+
+    valuations = (
+        await client.get(f"/api/v1/assets/{body['id']}/valuations", headers=h)
+    ).json()["items"]
+    assert len(valuations) == 1
+    assert valuations[0]["value_minor"] == 4000000
+    assert valuations[0]["as_of"] == "2026-01-01"
+
+
+async def test_create_asset_value_without_as_of_returns_422(client, initialized_instance):
+    h = await _auth(client)
+    resp = await client.post(
+        "/api/v1/assets", json=NEW | {"value_minor": 4000000}, headers=h
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "VALUATION_AS_OF_REQUIRED"
+
+
 async def test_create_asset_requires_auth(client, initialized_instance):
     resp = await client.post("/api/v1/assets", json=NEW)
     assert resp.status_code == 401
