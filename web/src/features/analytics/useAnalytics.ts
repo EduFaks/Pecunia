@@ -87,7 +87,7 @@ export interface ContactSpend {
   spend_minor: number;
 }
 
-/** Mirrors `NetWorthPoint` — one persisted daily snapshot value. */
+/** One month-end net-worth value for a currency (reconstructed on read, not persisted). */
 export interface NetWorthPoint {
   date: string;
   net_worth_minor: number;
@@ -152,9 +152,10 @@ export function selectCurrency<T>(data: PerCurrency<T> | undefined, currency: st
   return data?.[currency] ?? [];
 }
 
-/** Net-worth snapshot series for one currency (base currency by default),
- * oldest point first. Reading it lazily captures today's snapshot server-side
- * so the latest point is current. */
+/** Net-worth-over-time for one currency (base currency by default), oldest
+ * point first — reconstructed per month-end on the server from the workspace's
+ * dated balances/assets/holdings/loans (nothing persisted), so it matches the
+ * composition chart's totals. */
 export function useNetWorthSeries({ currency, range }: AnalyticsQueryOptions = {}) {
   const { base_currency } = usePreferences();
   const target = currency ?? base_currency;

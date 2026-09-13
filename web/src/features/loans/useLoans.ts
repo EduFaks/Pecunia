@@ -19,7 +19,7 @@
  * ledger (TanStack's partial-match invalidation, same as `qk.portfolios`
  * covering `qk.holdings`). It ALSO invalidates `["analytics"]` — the
  * net-worth-over-time series includes each loan's remaining balance per
- * currency via backend snapshots — since any loan/payment change moves net
+ * currency (reconstructed per month-end on read) — since any loan/payment change moves net
  * worth (a borrowed loan is a liability, a lent one a receivable). It does NOT
  * touch `qk.accounts`: a loan change never moves an account balance, and the
  * dashboard's net-worth tile reads loans through this very `qk.loans` prefix
