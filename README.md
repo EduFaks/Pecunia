@@ -47,6 +47,14 @@ access.
 
 ## Operating Pecunia
 
+**Network egress** — Pecunia runs fully offline, with one exception: the
+optional crypto price sync, which makes outbound HTTPS calls to CoinGecko
+(`api.coingecko.com`) to price portfolio holdings. It's on by default; disable
+it with `PECUNIA_ENABLE_PRICE_SYNC=false`. The on-demand "Update prices"
+button on a portfolio and the holding form's coin picker also reach CoinGecko
+directly, regardless of that setting — everything else never leaves your
+server.
+
 **Health check** — diagnose an instance:
 
 ```bash
