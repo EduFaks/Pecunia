@@ -249,12 +249,13 @@ value movement and semantic status, never decoration. A `:root[data-theme="light
 exists but is intentionally empty — do not rely on a light theme in V1. Eyebrows, index
 labels, and required-field markers (`*`) use ink (`text-ink-2`/`text-ink-faint`), never
 the accent — the accent is reserved for interactive emphasis and focus, not static labels.
-**Five named exceptions carry the accent as a progress/emphasis fill** (not decoration,
+**Six named exceptions carry the accent as a progress/emphasis fill** (not decoration,
 not status): the onboarding wizard's step-progress indicator, the owner step's
 password-strength meter (`PasswordStrength`), a project's funding-progress bar
-(`FundingBar`), a budget's spend-progress bar (`BudgetVsActualBar`), and a loan's payoff-progress bar (`LoanPayoffBar`) — all five express
+(`FundingBar`), a budget's spend-progress bar (`BudgetVsActualBar`), a loan's payoff-progress bar (`LoanPayoffBar`), and a savings goal's progress ring
+(`GoalRing`) — all six express
 "progress toward/against a bound," the place a static accent fill is sanctioned (none of
-the five render text on top of the fill, so none need the `text-on-accent` treatment). A static ratio is never emerald/coral (that
+the six render text on top of the fill, so none need the `text-on-accent` treatment). A static ratio is never emerald/coral (that
 would falsely imply gain/loss) — **except** `BudgetVsActualBar`, which is the one progress
 fill allowed to switch from the accent to coral (`--pc-negative`): going over a budget
 isn't just "more progress" the way exceeding a funding target is (which stays the accent,

@@ -131,6 +131,16 @@ export const qk = {
 
   contacts: ["contacts"] as const,
 
+  /** Savings goals (the Goals domain, v1.4). A single top-level key;
+   * `useGoals`'s bounded flat read suffixes it with `"flat"` (`["goals",
+   * "flat"]`) — same collision-avoidance move as `qk.loans`/`qk.contacts` —
+   * so every goal mutation's `invalidateQueries({ queryKey: qk.goals })`
+   * still covers it via TanStack's prefix match. A goal's `progress`/`eta`
+   * are computed server-side on every read (never cached separately), so no
+   * mutation elsewhere needs to invalidate this key — a goal only moves when
+   * its own CRUD mutations fire. */
+  goals: ["goals"] as const,
+
   /** Recurring schedules (the Planned domain, v1.1). A single top-level key;
    * `usePlanned`'s bounded flat read suffixes it with `"flat"`
    * (`["planned", "flat"]`) — same collision-avoidance move as
