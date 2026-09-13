@@ -44,7 +44,8 @@ export type PaymentFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
  * Σ payments and `remaining_minor` is `max(principal − paid_total, 0)` —
  * both computed server-side, integer minor units. `interest_rate_bps` is
  * stored in basis points for DISPLAY only (V1 does not amortize interest into
- * `remaining_minor`). */
+ * `remaining_minor`). `contact_id` links the counterparty (the lender you
+ * borrowed from, or the person you lent to) — null when unlinked. */
 export interface LoanOut {
   id: string;
   name: string;
@@ -57,6 +58,7 @@ export interface LoanOut {
   next_due: string | null;
   opened_on: string | null;
   description: string | null;
+  contact_id: string | null;
   is_demo: boolean;
   created_at: string;
   paid_total_minor: number;
@@ -103,6 +105,7 @@ export interface CreateLoanPayload {
   next_due?: string | null;
   opened_on?: string | null;
   description?: string | null;
+  contact_id?: string | null;
 }
 
 /** Mirrors `LoanUpdate` — every field optional, only what changed is sent. */
@@ -117,6 +120,7 @@ export interface UpdateLoanPayload {
   next_due?: string | null;
   opened_on?: string | null;
   description?: string | null;
+  contact_id?: string | null;
 }
 
 /** Mirrors `LoanPaymentIn`. `transaction_id` is optional — supplied only when

@@ -7,6 +7,9 @@ import { ToastProvider } from "../../components/ui/Toast";
 import ContactDetail from "./ContactDetail";
 import type { ContactOut, ContactOverview } from "./useContacts";
 import type { CategoryOut } from "../categories/useCategories";
+import type { LoanOut } from "../loans/useLoans";
+import type { ScheduledTransactionOut } from "../planned/usePlanned";
+import type { SubscriptionOut } from "../subscriptions/useSubscriptions";
 import type { TransactionOut } from "../transactions/useTransactions";
 
 vi.mock("../../lib/api", async (importOriginal) => {
@@ -76,10 +79,69 @@ const TRANSACTION: TransactionOut = {
   updated_at: "2026-09-10T00:00:00Z",
 };
 
+const PLANNED_ITEM: ScheduledTransactionOut = {
+  id: "s1",
+  account_id: "a1",
+  category_id: null,
+  contact_id: "c1",
+  amount_minor: -120000, // $1,200.00 out
+  currency: "USD",
+  description: "Monthly rent",
+  frequency: "monthly",
+  interval_count: 1,
+  next_due: "2026-10-01",
+  end_date: null,
+  is_active: true,
+  is_demo: false,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+const SUBSCRIPTION: SubscriptionOut = {
+  id: "sub1",
+  name: "Streamly",
+  logo: null,
+  amount_minor: 1500,
+  currency: "USD",
+  billing_frequency: "monthly",
+  next_renewal: "2026-09-20",
+  started_on: null,
+  status: "active",
+  contact_id: "c1",
+  account_id: null,
+  category_id: null,
+  is_demo: false,
+  created_at: "2026-01-01T00:00:00Z",
+  monthly_minor: 1500, // $15.00 / mo
+  annual_minor: 18000,
+};
+
+const CAR_LOAN: LoanOut = {
+  id: "l1",
+  name: "Car loan",
+  direction: "borrowed",
+  principal_minor: 2_500_000,
+  currency: "USD",
+  interest_rate_bps: null,
+  planned_payment_minor: null,
+  payment_frequency: null,
+  next_due: null,
+  opened_on: null,
+  description: null,
+  contact_id: "c1",
+  is_demo: false,
+  created_at: "2026-01-01T00:00:00Z",
+  paid_total_minor: 500_000,
+  remaining_minor: 2_000_000, // $20,000.00
+};
+
 interface Overrides {
   contact?: ContactOut;
   overview?: ContactOverview;
   transactions?: TransactionOut[];
+  planned?: ScheduledTransactionOut[];
+  subscriptions?: SubscriptionOut[];
+  loans?: LoanOut[];
 }
 
 function installFakeBackend(overrides: Overrides = {}) {
@@ -99,6 +161,15 @@ function installFakeBackend(overrides: Overrides = {}) {
     }
     if (path.startsWith("/transactions?")) {
       return Promise.resolve({ items: overrides.transactions ?? [TRANSACTION], next_cursor: null });
+    }
+    if (path.startsWith("/planned?")) {
+      return Promise.resolve({ items: overrides.planned ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/subscriptions?")) {
+      return Promise.resolve({ items: overrides.subscriptions ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/loans?")) {
+      return Promise.resolve({ items: overrides.loans ?? [], next_cursor: null });
     }
     return Promise.reject(new Error(`unexpected call: ${method} ${path}`));
   });
@@ -191,6 +262,56 @@ describe("ContactDetail", () => {
       expect(froms.length).toBeGreaterThan(1);
       expect(froms.at(-1)! > initialFrom).toBe(true);
     });
+  });
+
+  it("shows this contact's planned, subscriptions, and loans — each fetched by contact_id", async () => {
+    installFakeBackend({ planned: [PLANNED_ITEM], subscriptions: [SUBSCRIPTION], loans: [CAR_LOAN] });
+    renderDetail();
+
+    // Planned: description, amount, next-due date, frequency.
+    const planned = (await screen.findByRole("heading", { name: "Planned" })).closest("section")!;
+    expect(within(planned).getByText("Monthly rent")).toBeInTheDocument();
+    expect(within(planned).getByText(/1,200\.00/)).toBeInTheDocument();
+    // frequency + next-due caption ("Monthly · Next <date>")
+    expect(within(planned).getByText(/monthly · next/i)).toBeInTheDocument();
+    expect(within(planned).getByText(/10\/01\/2026/)).toBeInTheDocument();
+
+    // Subscriptions: name, monthly cost, renewal date.
+    const subs = screen.getByRole("heading", { name: "Subscriptions" }).closest("section")!;
+    expect(within(subs).getByText("Streamly")).toBeInTheDocument();
+    expect(within(subs).getByText(/15\.00/)).toBeInTheDocument();
+    expect(within(subs).getByText(/renews/i)).toBeInTheDocument();
+    expect(within(subs).getByText(/09\/20\/2026/)).toBeInTheDocument();
+
+    // Loans: name, remaining, direction.
+    const loans = screen.getByRole("heading", { name: "Loans" }).closest("section")!;
+    expect(within(loans).getByText("Car loan")).toBeInTheDocument();
+    expect(within(loans).getByText(/20,000\.00/)).toBeInTheDocument();
+    expect(within(loans).getByText("Borrowed")).toBeInTheDocument();
+
+    // Every section reads its list filtered to this contact.
+    const paths = mockApiFetch.mock.calls.map(([path]) => path as string);
+    expect(paths.some((p) => p.startsWith("/planned?") && p.includes("contact_id=c1"))).toBe(true);
+    expect(paths.some((p) => p.startsWith("/subscriptions?") && p.includes("contact_id=c1"))).toBe(
+      true,
+    );
+    expect(paths.some((p) => p.startsWith("/loans?") && p.includes("contact_id=c1"))).toBe(true);
+  });
+
+  it("hides the planned/subscriptions/loans sections entirely when each comes back empty", async () => {
+    installFakeBackend(); // planned/subscriptions/loans all default to []
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Acme Corp" });
+    // Wait until the section reads actually resolved before asserting absence.
+    await waitFor(() => {
+      const paths = mockApiFetch.mock.calls.map(([path]) => path as string);
+      expect(paths.some((p) => p.startsWith("/loans?"))).toBe(true);
+    });
+
+    expect(screen.queryByRole("heading", { name: "Planned" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Subscriptions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Loans" })).not.toBeInTheDocument();
   });
 
   it("holds an empty state when the contact has no activity in the period", async () => {

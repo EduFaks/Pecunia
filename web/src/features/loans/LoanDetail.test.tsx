@@ -26,10 +26,22 @@ const LOAN: LoanOut = {
   next_due: "2026-10-01",
   opened_on: "2025-01-01",
   description: "5-year auto loan",
+  contact_id: null,
   // Distinct from every payment figure below so the hero remaining is
   // unambiguous under getByText.
   remaining_minor: 2_365_000, // $23,650.00
   paid_total_minor: 135_000,
+  is_demo: false,
+  created_at: "2026-01-01T00:00:00Z",
+};
+
+const LENDER_CONTACT = {
+  id: "c-lender",
+  name: "First National",
+  default_category_id: null,
+  type: "company",
+  avatar: null,
+  archived_at: null,
   is_demo: false,
   created_at: "2026-01-01T00:00:00Z",
 };
@@ -70,11 +82,17 @@ const LINKED_TX = {
 };
 
 function installFakeBackend(
-  options: { loan?: LoanOut; payments?: LoanPaymentOut[]; transactions?: unknown[] } = {},
+  options: {
+    loan?: LoanOut;
+    payments?: LoanPaymentOut[];
+    transactions?: unknown[];
+    contacts?: unknown[];
+  } = {},
 ) {
   const loan = { ...(options.loan ?? LOAN) };
   const payments = [...(options.payments ?? [])];
   const transactions = [...(options.transactions ?? [])];
+  const contacts = [...(options.contacts ?? [])];
 
   mockApiFetch
     .mockReset()
@@ -83,6 +101,9 @@ function installFakeBackend(
 
       if (path === "/auth/me") {
         return Promise.resolve({ user: null, preferences: null });
+      }
+      if (path.startsWith("/contacts?") && method === "GET") {
+        return Promise.resolve({ items: contacts, next_cursor: null });
       }
       if (path.startsWith("/transactions?") && method === "GET") {
         return Promise.resolve({ items: transactions, next_cursor: null });
@@ -173,6 +194,18 @@ describe("LoanDetail", () => {
     expect(screen.getAllByText(/23,650\.00/).length).toBeGreaterThan(0);
     // Interest rate 425 bps → 4.25%
     expect(screen.getByText(/4\.25%/)).toBeInTheDocument();
+  });
+
+  it("shows the linked contact as a badge in the terms grid", async () => {
+    installFakeBackend({
+      loan: { ...LOAN, contact_id: "c-lender" },
+      payments: [],
+      contacts: [LENDER_CONTACT],
+    });
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Car loan" });
+    expect(await screen.findByText("First National")).toBeInTheDocument();
   });
 
   it("lists payments with date, amount, and note", async () => {

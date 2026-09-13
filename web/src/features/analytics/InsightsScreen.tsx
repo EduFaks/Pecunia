@@ -13,7 +13,8 @@ import { CategoryChart } from "./CategoryChart";
 import type { DonutDatum } from "../../components/charts/chartMath";
 import { ChartEmpty, ChartError, GraphCard } from "./GraphCard";
 import { NetWorthComposition } from "./NetWorthComposition";
-import { DEFAULT_PERIOD_MONTHS, computePeriodRange } from "./period";
+import { DEFAULT_PERIOD_SELECTION, computePeriodRange } from "./period";
+import type { PeriodSelection } from "./period";
 import { PeriodSelector } from "./PeriodSelector";
 import { useNetWorthComposition, useSpendingByCategory, useSpendingByContact } from "./useAnalytics";
 
@@ -155,10 +156,12 @@ function projectNote(project: ProjectOut, currency: string, locale?: string): st
 /**
  * The Insights screen (`/insights`) — the deeper analytical view that
  * complements, without duplicating, the dashboard's three headline graphs.
- * A shared period selector (last 3 / 6 / 12 months) at the top computes the
- * `{ from, to }` window every range-aware query on the screen reads, so
- * switching it refetches spending-by-contact and spending-by-category against
- * the new window (the range rides in each query key, see `useAnalytics`).
+ * A shared period selector (last 3 / 6 / 12 / 24 months, or All time) at the
+ * top drives every range-aware query on the screen: a bounded month count
+ * computes the `{ from, to }` window, while All time drops the client range
+ * and has the hooks send `?all=true` (the server reads from the workspace's
+ * earliest activity). Either way the mode rides in each query key, so
+ * switching refetches (see `useAnalytics`).
  *
  * Three cards, all base-currency (never summed across currencies, §4), all
  * tokens-only with calm empty/loading/error states matching the dashboard:
@@ -176,14 +179,19 @@ function InsightsScreen() {
   const locale = preferences.locale;
 
   // "Today" is fixed for the life of the screen so the window is stable across
-  // re-renders; only changing the month count recomputes the range.
+  // re-renders; only changing the selection recomputes the range. The all-time
+  // mode computes no range — `allTime` makes the hooks send `?all=true`.
   const [today] = useState(() => new Date());
-  const [months, setMonths] = useState(DEFAULT_PERIOD_MONTHS);
-  const range = useMemo(() => computePeriodRange(months, today), [months, today]);
+  const [selection, setSelection] = useState<PeriodSelection>(DEFAULT_PERIOD_SELECTION);
+  const allTime = selection.kind === "all";
+  const range = useMemo(
+    () => (selection.kind === "months" ? computePeriodRange(selection.months, today) : undefined),
+    [selection, today],
+  );
 
-  const compositionQuery = useNetWorthComposition({ range });
-  const contactQuery = useSpendingByContact({ range });
-  const categoryQuery = useSpendingByCategory({ range });
+  const compositionQuery = useNetWorthComposition({ range, allTime });
+  const contactQuery = useSpendingByContact({ range, allTime });
+  const categoryQuery = useSpendingByCategory({ range, allTime });
   const projectsQuery = useProjectList();
 
   const contactRows: BreakdownRow[] = (contactQuery.data ?? []).map((row) => ({
@@ -220,7 +228,7 @@ function InsightsScreen() {
             A deeper look at where your money goes, over your chosen period.
           </p>
         </div>
-        <PeriodSelector months={months} onChange={setMonths} />
+        <PeriodSelector value={selection} onChange={setSelection} />
       </div>
 
       <GraphCard title="Net worth composition">
