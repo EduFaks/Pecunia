@@ -887,3 +887,50 @@ async def test_upcoming_endpoint_returns_due_and_over_budget(client, db, initial
 
 def _today_utc():
     return datetime.now(UTC).date()
+
+
+# ---------------------------------------------------------------------- forecast
+
+
+async def test_forecast_endpoint_returns_per_currency_cash_and_net_worth(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD", initial=10_000)
+    await _scheduled(
+        db, ws_id, acc, description="Salary", amount=5_000,
+        next_due=_today_utc() + timedelta(days=1),
+    )
+    await db.commit()  # the request runs in its own session
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/forecast", params={"months": 2}, headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"USD"}
+    assert len(body["USD"]["cash"]) == 2
+    assert len(body["USD"]["net_worth"]) == 2
+    first = body["USD"]["cash"][0]
+    assert first["projected"] is True
+    assert {"date", "value_minor", "lower_minor", "upper_minor", "projected"} <= set(first)
+
+
+async def test_forecast_endpoint_defaults_to_six_months(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD")
+    await db.commit()
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/forecast", headers=h)
+    assert resp.status_code == 200
+    assert len(resp.json()["USD"]["cash"]) == 6
+
+
+async def test_forecast_endpoint_rejects_months_outside_one_to_twenty_four(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD")
+    await db.commit()
+    h = await _auth(client)
+
+    too_low = await client.get("/api/v1/analytics/forecast", params={"months": 0}, headers=h)
+    too_high = await client.get("/api/v1/analytics/forecast", params={"months": 25}, headers=h)
+    assert too_low.status_code == 422
+    assert too_high.status_code == 422

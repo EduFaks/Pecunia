@@ -10,6 +10,7 @@ from pecunia.api.deps import WorkspaceContext, require_initialized, require_work
 from pecunia.db import get_db
 from pecunia.period import shift_month
 from pecunia.services.analytics import AnalyticsService
+from pecunia.services.forecast import ForecastService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depends(require_initialized)])
 
@@ -114,6 +115,19 @@ class Upcoming(BaseModel):
     over_budget: list[OverBudget]
 
 
+class ForecastPoint(BaseModel):
+    date: date
+    value_minor: int
+    lower_minor: int
+    upper_minor: int
+    projected: bool
+
+
+class ForecastMetrics(BaseModel):
+    cash: list[ForecastPoint]
+    net_worth: list[ForecastPoint]
+
+
 @router.get("/cashflow")
 async def cashflow(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -201,3 +215,14 @@ async def upcoming(
     return await AnalyticsService(db).upcoming(
         wsctx.workspace_id, today=_today(), within_days=within_days, limit=limit
     )
+
+
+@router.get("/forecast")
+async def forecast(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+    months: Annotated[int, Query(ge=1, le=24)] = 6,
+) -> dict[str, ForecastMetrics]:
+    # A pure read (nothing captured/persisted); the wall clock lives here so
+    # the service stays clock-free (§4).
+    return await ForecastService(db).forecast(wsctx.workspace_id, today=_today(), months=months)
