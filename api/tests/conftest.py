@@ -103,6 +103,10 @@ async def _pg_clean(engine):
             # net_worth_snapshots references only workspaces (CASCADE) and has
             # no children — delete it before workspaces.
             "net_worth_snapshots",
+            # goals references only workspaces (CASCADE) and has no
+            # children — delete it before workspaces, same as
+            # net_worth_snapshots.
+            "goals",
             "workspace_memberships",
             "workspaces",
             "users",
