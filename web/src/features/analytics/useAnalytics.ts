@@ -139,6 +139,26 @@ export interface Upcoming {
   over_budget: OverBudget[];
 }
 
+/** Mirrors `ForecastPoint` (`api/src/pecunia/api/analytics.py`) — one
+ * projected future month, always `projected: true` (the endpoint only ever
+ * returns future points; the caller appends them after real history). */
+export interface ForecastPoint {
+  date: string;
+  value_minor: number;
+  lower_minor: number;
+  upper_minor: number;
+  projected: boolean;
+}
+
+/** Mirrors `ForecastMetrics` — the two series `/analytics/forecast` projects
+ * for one currency. */
+export interface ForecastMetrics {
+  cash: ForecastPoint[];
+  net_worth: ForecastPoint[];
+}
+
+const EMPTY_FORECAST: ForecastMetrics = { cash: [], net_worth: [] };
+
 /** The per-currency envelope every analytics endpoint returns. */
 export type PerCurrency<T> = Record<string, T[]>;
 
@@ -248,5 +268,113 @@ export function useUpcoming() {
   return useQuery({
     queryKey: qk.analytics.upcoming(),
     queryFn: () => apiFetch<Upcoming>("/analytics/upcoming"),
+  });
+}
+
+/** Appends the `months` query param for a non-default forecast horizon; a
+ * bare path (server-defaulted to 6 months) when none is given. Kept here
+ * (pure, exported for its unit tests) alongside `analyticsPath`, the same
+ * URL-building move. */
+export function forecastPath(months?: number): string {
+  return months ? `/analytics/forecast?months=${months}` : "/analytics/forecast";
+}
+
+/**
+ * The forecast engine (Track O, v1.4) — projected cash + net-worth points for
+ * the next `months` months (6 by default), one currency's `{ cash, net_worth }`
+ * pair picked out of the per-currency response (base currency by default,
+ * same `select`-side pick every other analytics hook here makes). A currency
+ * with nothing to project (or while still loading) reads as an empty pair
+ * rather than `undefined`, so callers never need an extra null check before
+ * mapping `.cash`/`.net_worth`.
+ */
+export function useForecast({
+  currency,
+  months,
+}: { currency?: string; months?: number } = {}) {
+  const { base_currency } = usePreferences();
+  const target = currency ?? base_currency;
+  return useQuery({
+    queryKey: qk.analytics.forecast(months),
+    queryFn: () => apiFetch<Record<string, ForecastMetrics>>(forecastPath(months)),
+    select: (data) => data?.[target] ?? EMPTY_FORECAST,
+  });
+}
+
+/** Mirrors `SavingsOut` — this month's income/spend so far, plus the prior
+ * month's, for the dashboard savings-rate tile's trend arrow. */
+export interface Savings {
+  income_minor: number;
+  spend_minor: number;
+  saved_minor: number;
+  rate_bps: number;
+  prev_saved_minor: number;
+  prev_rate_bps: number;
+}
+
+/** Mirrors `CommittedMonthlyOut` — active subscriptions + loan planned
+ * payments + active recurring planned expenses, each normalized to a
+ * monthly figure. */
+export interface CommittedMonthly {
+  total_minor: number;
+  subscriptions_minor: number;
+  loans_minor: number;
+  planned_minor: number;
+}
+
+/** Mirrors `Mover` — one net-worth component's delta since the start of the
+ * month (`label` is "Cash"/"Assets"/"Investments"/"Debts"). */
+export interface Mover {
+  label: string;
+  delta_minor: number;
+}
+
+/** Mirrors `NetWorthChangeOut` — `net_worth_as_of(today)` vs. the start of
+ * the month, plus the top non-zero component movers. */
+export interface NetWorthChange {
+  now_minor: number;
+  start_of_month_minor: number;
+  delta_minor: number;
+  pct_bps: number;
+  movers: Mover[];
+}
+
+/** Mirrors `SummaryOut` — the three dashboard KPI tiles' figures for one
+ * currency. */
+export interface Summary {
+  savings: Savings;
+  committed_monthly: CommittedMonthly;
+  net_worth_change: NetWorthChange;
+}
+
+/**
+ * Picks one currency's summary out of the per-currency `/analytics/summary`
+ * response — `undefined` for a currency absent from the response (or while
+ * still loading), so each KPI card can show its own calm empty state rather
+ * than a fabricated all-zero one. Kept pure and exported so the selection is
+ * unit-testable without rendering a hook (mirrors `selectCurrency`).
+ */
+export function selectSummary(
+  data: Record<string, Summary> | undefined,
+  currency: string,
+): Summary | undefined {
+  return data?.[currency];
+}
+
+/**
+ * The dashboard's three KPI tiles (Track R, v1.4) — savings rate, committed
+ * monthly cost, and net-worth change — one currency's `Summary` picked out
+ * of the per-currency response (base currency by default, same `select`-side
+ * pick every other analytics hook here makes). No reporting window: the
+ * endpoint always reads "now", so there's nothing to put in the query key
+ * beyond the bare `qk.analytics.summary()` slot.
+ */
+export function useSummary({ currency }: { currency?: string } = {}) {
+  const { base_currency } = usePreferences();
+  const target = currency ?? base_currency;
+  return useQuery({
+    queryKey: qk.analytics.summary(),
+    queryFn: () => apiFetch<Record<string, Summary>>("/analytics/summary"),
+    select: (data) => selectSummary(data, target),
   });
 }

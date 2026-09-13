@@ -46,6 +46,8 @@ function mockEndpoints(overrides: {
   netWorth?: Record<string, unknown[]>;
   cashflow?: Record<string, unknown[]>;
   spendingByCategory?: Record<string, unknown[]>;
+  forecast?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
   upcoming?: { due?: unknown[]; over_budget?: unknown[] };
 }) {
   mockApiFetch.mockReset().mockImplementation((path: string) => {
@@ -70,6 +72,12 @@ function mockEndpoints(overrides: {
     }
     if (path.startsWith("/analytics/spending-by-category")) {
       return Promise.resolve(overrides.spendingByCategory ?? {});
+    }
+    if (path.startsWith("/analytics/forecast")) {
+      return Promise.resolve(overrides.forecast ?? {});
+    }
+    if (path.startsWith("/analytics/summary")) {
+      return Promise.resolve(overrides.summary ?? {});
     }
     if (path.startsWith("/accounts")) {
       return Promise.resolve({ items: overrides.accounts ?? [], next_cursor: null });
@@ -266,10 +274,42 @@ describe("Dashboard", () => {
 
     expect(await screen.findByRole("heading", { name: /net worth over time/i })).toBeInTheDocument();
     // The chart is a labeled figure (role=img) whose aria-label summarizes the
-    // trend; the Recharts area paints inside it.
+    // trend; the Recharts solid history line paints inside it (no forecast
+    // mocked here, so no dashed tail/band).
     await screen.findByRole("img", { name: /net worth: trending up/i });
-    expect(container.querySelector(".recharts-area")).not.toBeNull();
+    expect(container.querySelector(".recharts-line")).not.toBeNull();
     expect(container.querySelector("svg.recharts-surface")).not.toBeNull();
+  });
+
+  it("appends a dashed projected tail with a shaded band from the forecast series", async () => {
+    mockEndpoints({
+      accounts: ONE_ACCOUNT,
+      netWorth: {
+        USD: [
+          { date: "2026-01-01", net_worth_minor: 100000 },
+          { date: "2026-02-01", net_worth_minor: 120000 },
+        ],
+      },
+      forecast: {
+        USD: {
+          cash: [],
+          net_worth: [
+            { date: "2026-03-31", value_minor: 140000, lower_minor: 130000, upper_minor: 150000, projected: true },
+          ],
+        },
+      },
+    });
+
+    const { container } = renderDashboard();
+
+    await screen.findByRole("heading", { name: /net worth over time/i });
+    await screen.findByRole("img", { name: /net worth: trending up/i });
+    // Two lines: the solid history segment and the dashed projected tail.
+    const lines = container.querySelectorAll(".recharts-line-curve");
+    expect(lines.length).toBe(2);
+    expect(Array.from(lines).some((line) => line.getAttribute("stroke-dasharray"))).toBe(true);
+    // The uncertainty band renders as a shaded Recharts area.
+    expect(container.querySelectorAll(".recharts-area").length).toBeGreaterThan(0);
   });
 
   it("charts income vs spend as two Recharts bar series from the cashflow series", async () => {
@@ -350,6 +390,36 @@ describe("Dashboard", () => {
     expect(await screen.findByText(/no net-worth history yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no income or spending recorded yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no spending to break down yet/i)).toBeInTheDocument();
+  });
+
+  it("mounts the three KPI tiles from /analytics/summary", async () => {
+    mockEndpoints({
+      accounts: ONE_ACCOUNT,
+      summary: {
+        USD: {
+          savings: {
+            income_minor: 10_000, spend_minor: 4_000, saved_minor: 6_000, rate_bps: 6_000,
+            prev_saved_minor: 0, prev_rate_bps: 0,
+          },
+          committed_monthly: {
+            total_minor: 5_200, subscriptions_minor: 3_200, loans_minor: 1_200, planned_minor: 800,
+          },
+          net_worth_change: {
+            now_minor: 105_000, start_of_month_minor: 70_000, delta_minor: 35_000, pct_bps: 5_000,
+            movers: [{ label: "Cash", delta_minor: 20_000 }],
+          },
+        },
+      },
+    });
+
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: /savings rate/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /committed monthly cost/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /net worth change/i })).toBeInTheDocument();
+    expect(await screen.findByText(/60\.00/)).toBeInTheDocument(); // savings: $60.00 saved
+    expect(await screen.findByText(/52\.00/)).toBeInTheDocument(); // committed: $52.00
+    expect(await screen.findByText(/350\.00/)).toBeInTheDocument(); // net-worth change: $350.00
   });
 
   it("mounts the Upcoming widget, rendering a due item from /analytics/upcoming", async () => {

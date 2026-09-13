@@ -3,10 +3,12 @@ import {
   describeBreakdown,
   describeBreakdownBars,
   describeCashflow,
+  describeForecast,
   describeTrend,
+  mergeForecastSeries,
   trendDirection,
 } from "./chartMath";
-import type { CashflowBar, ChartPoint, DonutDatum } from "./chartMath";
+import type { CashflowBar, ChartPoint, DonutDatum, ForecastChartPoint } from "./chartMath";
 
 const RISING: ChartPoint[] = [
   { date: "2026-01-01", valueMinor: 1000 },
@@ -104,5 +106,66 @@ describe("describeBreakdownBars", () => {
 
   it("reports no data for an empty breakdown", () => {
     expect(describeBreakdownBars("Spending by contact", [], "USD", "en-US")).toContain("No");
+  });
+});
+
+const HISTORY: ChartPoint[] = [
+  { date: "2026-07-31", valueMinor: 1000 },
+  { date: "2026-08-31", valueMinor: 1200 },
+];
+
+const PROJECTED: ForecastChartPoint[] = [
+  { date: "2026-09-30", valueMinor: 1400, lowerMinor: 1300, upperMinor: 1500 },
+  { date: "2026-10-31", valueMinor: 1600, lowerMinor: 1400, upperMinor: 1800 },
+];
+
+describe("mergeForecastSeries", () => {
+  it("keeps history points as historyValue-only rows", () => {
+    const merged = mergeForecastSeries(HISTORY, []);
+    expect(merged).toEqual([
+      { date: "2026-07-31", historyValue: 1000 },
+      { date: "2026-08-31", historyValue: 1200 },
+    ]);
+  });
+
+  it("bridges the last history point onto the dashed line so it connects with no gap", () => {
+    const merged = mergeForecastSeries(HISTORY, PROJECTED);
+
+    // The last history point gains a projectedValue equal to its own
+    // historyValue, so line 2 (dashed) starts exactly where line 1 ends.
+    const bridge = merged[1];
+    expect(bridge).toEqual({ date: "2026-08-31", historyValue: 1200, projectedValue: 1200 });
+
+    const projectedRows = merged.slice(2);
+    expect(projectedRows).toEqual([
+      { date: "2026-09-30", projectedValue: 1400, lower: 1300, bandWidth: 200 },
+      { date: "2026-10-31", projectedValue: 1600, lower: 1400, bandWidth: 400 },
+    ]);
+  });
+
+  it("has no bridge row when there is no history to connect from", () => {
+    const merged = mergeForecastSeries([], PROJECTED);
+    expect(merged).toEqual([
+      { date: "2026-09-30", projectedValue: 1400, lower: 1300, bandWidth: 200 },
+      { date: "2026-10-31", projectedValue: 1600, lower: 1400, bandWidth: 400 },
+    ]);
+  });
+
+  it("returns an empty series when both history and projected are empty", () => {
+    expect(mergeForecastSeries([], [])).toEqual([]);
+  });
+});
+
+describe("describeForecast", () => {
+  it("names the metric and the final projected figure", () => {
+    const text = describeForecast("Cash forecast", PROJECTED, "USD", "en-US");
+    expect(text).toContain("Cash forecast");
+    expect(text).toContain("16.00"); // last point 1600 minor -> $16.00
+  });
+
+  it("reports no forecast for an empty projected series", () => {
+    expect(describeForecast("Cash forecast", [], "USD", "en-US")).toBe(
+      "Cash forecast: no forecast available.",
+    );
   });
 });

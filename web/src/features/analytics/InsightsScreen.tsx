@@ -10,13 +10,19 @@ import type { ChartConfig } from "../../components/ui/chart";
 import { useProjectList } from "../projects/useProjects";
 import type { ProjectOut } from "../projects/useProjects";
 import { CategoryChart } from "./CategoryChart";
-import type { DonutDatum } from "../../components/charts/chartMath";
+import type { DonutDatum, ForecastChartPoint } from "../../components/charts/chartMath";
+import { ForecastArea } from "./ForecastArea";
 import { ChartEmpty, ChartError, GraphCard } from "./GraphCard";
 import { NetWorthComposition } from "./NetWorthComposition";
 import { DEFAULT_PERIOD_SELECTION, computePeriodRange } from "./period";
 import type { PeriodSelection } from "./period";
 import { PeriodSelector } from "./PeriodSelector";
-import { useNetWorthComposition, useSpendingByCategory, useSpendingByContact } from "./useAnalytics";
+import {
+  useForecast,
+  useNetWorthComposition,
+  useSpendingByCategory,
+  useSpendingByContact,
+} from "./useAnalytics";
 
 /** One row of a ranked breakdown. `note` is an optional muted secondary
  * caption (e.g. a project's "of $500.00 planned"). */
@@ -163,7 +169,7 @@ function projectNote(project: ProjectOut, currency: string, locale?: string): st
  * earliest activity). Either way the mode rides in each query key, so
  * switching refetches (see `useAnalytics`).
  *
- * Three cards, all base-currency (never summed across currencies, §4), all
+ * Cards, all base-currency (never summed across currencies, §4), all
  * tokens-only with calm empty/loading/error states matching the dashboard:
  *   - Spending by contact — a ranked horizontal breakdown (`BreakdownChart`).
  *   - Spending by category — the dashboard's shared `CategoryChart` donut over
@@ -172,6 +178,12 @@ function projectNote(project: ProjectOut, currency: string, locale?: string): st
  *     no new endpoint: each project's realized `actual_minor`, ranked. Project
  *     actuals are cumulative (there's no dated per-project figure), so this
  *     card is a current snapshot rather than being bound by the selector.
+ *   - Cash forecast (Track O, v1.4) — the next 6 months of projected cash
+ *     balance from `/analytics/forecast`, via the shared `ForecastArea`
+ *     treatment (dashed line + uncertainty band + a zero reference line
+ *     flagging a projected negative balance). Forward-looking, so unlike the
+ *     other cards it ignores the period selector entirely — there's no
+ *     historical cash-balance series to bound.
  */
 function InsightsScreen() {
   const preferences = usePreferences();
@@ -193,6 +205,9 @@ function InsightsScreen() {
   const contactQuery = useSpendingByContact({ range, allTime });
   const categoryQuery = useSpendingByCategory({ range, allTime });
   const projectsQuery = useProjectList();
+  // Forward-looking, so it ignores the period selector entirely (see the
+  // component docstring).
+  const forecastQuery = useForecast();
 
   const contactRows: BreakdownRow[] = (contactQuery.data ?? []).map((row) => ({
     key: row.contact_id ?? "no-contact",
@@ -209,6 +224,13 @@ function InsightsScreen() {
   // Only categories with positive spend get a wedge (mirrors the dashboard's
   // positive-only donut geometry).
   const positiveCategories = categoryData.filter((datum) => datum.valueMinor > 0);
+
+  const cashProjected: ForecastChartPoint[] = (forecastQuery.data?.cash ?? []).map((point) => ({
+    date: point.date,
+    valueMinor: point.value_minor,
+    lowerMinor: point.lower_minor,
+    upperMinor: point.upper_minor,
+  }));
 
   const projectRows: BreakdownRow[] = (projectsQuery.data?.items ?? [])
     .filter((project) => project.currency === baseCurrency)
@@ -294,6 +316,26 @@ function InsightsScreen() {
             empty={
               <ChartEmpty>
                 {projectsQuery.isLoading ? "Loading…" : "No project spending recorded yet."}
+              </ChartEmpty>
+            }
+          />
+        )}
+      </GraphCard>
+
+      <GraphCard title="Cash forecast">
+        {forecastQuery.isError ? (
+          <ChartError />
+        ) : (
+          <ForecastArea
+            data={{ history: [], projected: cashProjected }}
+            metric="cash"
+            currency={baseCurrency}
+            locale={locale}
+            empty={
+              <ChartEmpty>
+                {forecastQuery.isLoading
+                  ? "Loading…"
+                  : "No committed transactions to project yet — add planned income, subscriptions, or loan payments."}
               </ChartEmpty>
             }
           />

@@ -10,6 +10,7 @@ from pecunia.api.deps import WorkspaceContext, require_initialized, require_work
 from pecunia.db import get_db
 from pecunia.period import shift_month
 from pecunia.services.analytics import AnalyticsService
+from pecunia.services.forecast import ForecastService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depends(require_initialized)])
 
@@ -114,6 +115,54 @@ class Upcoming(BaseModel):
     over_budget: list[OverBudget]
 
 
+class ForecastPoint(BaseModel):
+    date: date
+    value_minor: int
+    lower_minor: int
+    upper_minor: int
+    projected: bool
+
+
+class ForecastMetrics(BaseModel):
+    cash: list[ForecastPoint]
+    net_worth: list[ForecastPoint]
+
+
+class SavingsOut(BaseModel):
+    income_minor: int
+    spend_minor: int
+    saved_minor: int
+    rate_bps: int
+    prev_saved_minor: int
+    prev_rate_bps: int
+
+
+class CommittedMonthlyOut(BaseModel):
+    total_minor: int
+    subscriptions_minor: int
+    loans_minor: int
+    planned_minor: int
+
+
+class Mover(BaseModel):
+    label: str
+    delta_minor: int
+
+
+class NetWorthChangeOut(BaseModel):
+    now_minor: int
+    start_of_month_minor: int
+    delta_minor: int
+    pct_bps: int
+    movers: list[Mover]
+
+
+class SummaryOut(BaseModel):
+    savings: SavingsOut
+    committed_monthly: CommittedMonthlyOut
+    net_worth_change: NetWorthChangeOut
+
+
 @router.get("/cashflow")
 async def cashflow(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -201,3 +250,23 @@ async def upcoming(
     return await AnalyticsService(db).upcoming(
         wsctx.workspace_id, today=_today(), within_days=within_days, limit=limit
     )
+
+
+@router.get("/forecast")
+async def forecast(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+    months: Annotated[int, Query(ge=1, le=24)] = 6,
+) -> dict[str, ForecastMetrics]:
+    # A pure read (nothing captured/persisted); the wall clock lives here so
+    # the service stays clock-free (§4).
+    return await ForecastService(db).forecast(wsctx.workspace_id, today=_today(), months=months)
+
+
+@router.get("/summary")
+async def summary(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+) -> dict[str, SummaryOut]:
+    # A pure read; the wall clock lives here so the service stays clock-free (§4).
+    return await AnalyticsService(db).summary(wsctx.workspace_id, today=_today())

@@ -174,6 +174,21 @@ export const qk = {
      * rather than a per-currency map — a single static slot under the shared
      * `["analytics"]` prefix, so an `["analytics"]` invalidation covers it too. */
     upcoming: () => ["analytics", "upcoming"] as const,
+    /** The forecast engine (`/analytics/forecast`, Track O v1.4) — projected
+     * cash + net-worth points for the next `months` months. Takes no `from`/
+     * `to` window (it always looks forward from today, not at a historical
+     * range) — just the horizon length, so the key is the bare `["analytics",
+     * "forecast"]` slot for the default horizon, or that plus `{ months }`
+     * for a non-default one, the same "bare vs. suffixed" shape `analyticsKey`
+     * gives every other endpoint here. Still nests under the shared
+     * `["analytics"]` prefix for invalidation. */
+    forecast: (months?: number) =>
+      months ? (["analytics", "forecast", { months }] as const) : (["analytics", "forecast"] as const),
+    /** The dashboard KPI tiles (`/analytics/summary`, Track R v1.4) — savings
+     * rate, committed monthly cost, and net-worth change, all for "now" (no
+     * `from`/`to` window to key on), so a single bare slot under the shared
+     * `["analytics"]` prefix. */
+    summary: () => ["analytics", "summary"] as const,
   },
 
   auditEvents: (filters: AuditEventFilters = {}) => ["audit-events", filters] as const,

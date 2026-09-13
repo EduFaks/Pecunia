@@ -687,12 +687,13 @@ async def _subscription(
 
 async def _due_loan(
     db, ws_id, *, name, planned_payment, next_due,
-    direction="borrowed", principal=100_000, currency="USD",
+    direction="borrowed", principal=100_000, currency="USD", payment_frequency=None,
 ):
     loan = Loan(
         id=uuid.uuid4(), workspace_id=ws_id, name=name, direction=direction,
         principal_minor=principal, currency=currency,
         planned_payment_minor=planned_payment, next_due=next_due,
+        payment_frequency=payment_frequency,
     )
     db.add(loan)
     await db.flush()
@@ -887,3 +888,220 @@ async def test_upcoming_endpoint_returns_due_and_over_budget(client, db, initial
 
 def _today_utc():
     return datetime.now(UTC).date()
+
+
+# ---------------------------------------------------------------------- forecast
+
+
+async def test_forecast_endpoint_returns_per_currency_cash_and_net_worth(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD", initial=10_000)
+    await _scheduled(
+        db, ws_id, acc, description="Salary", amount=5_000,
+        next_due=_today_utc() + timedelta(days=1),
+    )
+    await db.commit()  # the request runs in its own session
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/forecast", params={"months": 2}, headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"USD"}
+    assert len(body["USD"]["cash"]) == 2
+    assert len(body["USD"]["net_worth"]) == 2
+    first = body["USD"]["cash"][0]
+    assert first["projected"] is True
+    assert {"date", "value_minor", "lower_minor", "upper_minor", "projected"} <= set(first)
+
+
+async def test_forecast_endpoint_defaults_to_six_months(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD")
+    await db.commit()
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/forecast", headers=h)
+    assert resp.status_code == 200
+    assert len(resp.json()["USD"]["cash"]) == 6
+
+
+async def test_forecast_endpoint_rejects_months_outside_one_to_twenty_four(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD")
+    await db.commit()
+    h = await _auth(client)
+
+    too_low = await client.get("/api/v1/analytics/forecast", params={"months": 0}, headers=h)
+    too_high = await client.get("/api/v1/analytics/forecast", params={"months": 25}, headers=h)
+    assert too_low.status_code == 422
+    assert too_high.status_code == 422
+
+
+# ----------------------------------------------------------------------- summary
+
+
+async def test_summary_savings_rate_and_prior_month_trend(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD")
+    # Current month (Sep 2026): income 10_000, spend 4_000 -> saved 6_000, 60%.
+    await _tx(db, ws_id, acc, amount=10_000, on=date(2026, 9, 5))
+    await _tx(db, ws_id, acc, amount=-4_000, on=date(2026, 9, 10))
+    # Prior month (Aug 2026): income 8_000, spend 8_000 -> saved 0, 0%.
+    await _tx(db, ws_id, acc, amount=8_000, on=date(2026, 8, 5))
+    await _tx(db, ws_id, acc, amount=-8_000, on=date(2026, 8, 10))
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    assert result["USD"]["savings"] == {
+        "income_minor": 10_000, "spend_minor": 4_000, "saved_minor": 6_000, "rate_bps": 6_000,
+        "prev_saved_minor": 0, "prev_rate_bps": 0,
+    }
+
+
+async def test_summary_savings_rate_is_zero_when_income_is_zero(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD")
+    await _tx(db, ws_id, acc, amount=-5_000, on=date(2026, 9, 5))  # spend only, no income
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    savings = result["USD"]["savings"]
+    assert savings["income_minor"] == 0
+    assert savings["saved_minor"] == -5_000
+    assert savings["rate_bps"] == 0  # never a division by zero
+
+
+async def test_summary_committed_monthly_normalizes_every_cycle(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD")
+    # weekly 1_200 -> annual 62_400 -> monthly 5_200
+    await _subscription(
+        db, ws_id, name="Cleaner", amount=1_200, next_renewal=date(2026, 10, 1),
+        billing_frequency="weekly",
+    )
+    # quarterly planned payment 9_000 -> annual 36_000 -> monthly 3_000
+    await _due_loan(
+        db, ws_id, name="Car", planned_payment=9_000, next_due=date(2026, 10, 10),
+        payment_frequency="quarterly",
+    )
+    # yearly recurring expense 24_000 -> annual 24_000 -> monthly 2_000
+    await _scheduled(
+        db, ws_id, acc, description="Insurance", amount=-24_000, next_due=date(2026, 10, 1),
+        frequency="yearly",
+    )
+    # recurring INCOME must never count as a committed cost
+    await _scheduled(
+        db, ws_id, acc, description="Salary", amount=50_000, next_due=date(2026, 10, 1),
+        frequency="monthly",
+    )
+    # a canceled subscription and an inactive schedule must never count
+    await _subscription(
+        db, ws_id, name="Gone", amount=99_999, next_renewal=date(2026, 10, 1), status="canceled",
+    )
+    await _scheduled(
+        db, ws_id, acc, description="Paused", amount=-99_999, next_due=date(2026, 10, 1),
+        is_active=False,
+    )
+    # a loan with a planned payment but no frequency can't be normalized -> skipped
+    await _due_loan(db, ws_id, name="Undated", planned_payment=1_000, next_due=None)
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    assert result["USD"]["committed_monthly"] == {
+        "total_minor": 10_200, "subscriptions_minor": 5_200, "loans_minor": 3_000, "planned_minor": 2_000,
+    }
+
+
+async def test_summary_net_worth_change_delta_pct_and_top_movers(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD", initial=100_000)
+    # cash: +20_000 after the start of the month
+    await _tx(db, ws_id, acc, amount=20_000, on=date(2026, 9, 5))
+    # assets: 0 -> 5_000 after the start of the month
+    asset = Asset(id=uuid.uuid4(), workspace_id=ws_id, name="X", type="other", currency="USD")
+    db.add(asset)
+    await db.flush()
+    db.add(AssetValuation(
+        id=uuid.uuid4(), workspace_id=ws_id, asset_id=asset.id,
+        value_minor=5_000, as_of=date(2026, 9, 10),
+    ))
+    # debts: a 30_000 loan, paid down 10_000 after the start of the month
+    # (a shrinking liability is a +10_000 move for net worth).
+    loan = await _loan(db, ws_id, direction="borrowed", principal=30_000)
+    db.add(LoanPayment(
+        id=uuid.uuid4(), workspace_id=ws_id, loan_id=loan.id,
+        amount_minor=10_000, paid_on=date(2026, 9, 12),
+    ))
+    await db.flush()
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    change = result["USD"]["net_worth_change"]
+    # start of month (Sep 1): cash 100_000, assets 0, investments 0, debts -30_000 -> 70_000
+    # now (Sep 13): cash 120_000, assets 5_000, investments 0, debts -20_000 -> 105_000
+    assert change["start_of_month_minor"] == 70_000
+    assert change["now_minor"] == 105_000
+    assert change["delta_minor"] == 35_000
+    assert change["pct_bps"] == 5_000  # 35_000 / 70_000 = 50.00%
+    # ranked by |delta|: cash (+20_000), debts (+10_000), assets (+5_000);
+    # investments never moved (0), so it's excluded, not just ranked last.
+    assert change["movers"] == [
+        {"label": "Cash", "delta_minor": 20_000},
+        {"label": "Debts", "delta_minor": 10_000},
+        {"label": "Assets", "delta_minor": 5_000},
+    ]
+
+
+async def test_summary_per_currency_isolation(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    usd_acc = await _account(db, ws_id, currency="USD", initial=10_000, name="USD")
+    await _account(db, ws_id, currency="EUR", initial=20_000, name="EUR")
+    await _subscription(
+        db, ws_id, name="UsdSub", amount=1_000, next_renewal=date(2026, 10, 1), currency="USD",
+    )
+    await _subscription(
+        db, ws_id, name="EurSub", amount=2_000, next_renewal=date(2026, 10, 1), currency="EUR",
+    )
+    await _tx(db, ws_id, usd_acc, amount=5_000, on=date(2026, 9, 5), currency="USD")
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    assert result["USD"]["committed_monthly"]["subscriptions_minor"] == 1_000
+    assert result["EUR"]["committed_monthly"]["subscriptions_minor"] == 2_000
+    assert result["USD"]["savings"]["income_minor"] == 5_000
+    # the EUR account had no transactions this/last month -> no EUR savings activity
+    assert "EUR" not in result or result["EUR"]["savings"]["income_minor"] == 0
+
+
+async def test_summary_is_workspace_scoped(db, initialized_instance, user_factory):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD", initial=1_000)
+
+    other_ws = await _other_workspace(db, user_factory)
+    other_acc = await _account(db, other_ws.id, currency="USD", initial=999_000, name="Other")
+    await _subscription(
+        db, other_ws.id, name="Theirs", amount=50_000, next_renewal=date(2026, 10, 1),
+    )
+    await _tx(db, other_ws.id, other_acc, amount=999_000, on=date(2026, 9, 5))
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    assert result["USD"]["committed_monthly"]["subscriptions_minor"] == 0
+    assert result["USD"]["net_worth_change"]["now_minor"] == 1_000
+
+
+async def test_summary_endpoint_returns_per_currency_metrics(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD", initial=10_000)
+    await _tx(db, ws_id, acc, amount=5_000, on=_today_utc())
+    await db.commit()  # the request runs in its own session
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/summary", headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "USD" in body
+    usd = body["USD"]
+    assert {"savings", "committed_monthly", "net_worth_change"} <= set(usd)
+    assert usd["savings"]["income_minor"] == 5_000
+    assert usd["net_worth_change"]["now_minor"] == 15_000

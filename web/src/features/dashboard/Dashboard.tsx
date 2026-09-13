@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { describeCashflow, describeTrend } from "../../components/charts/chartMath";
-import type { CashflowBar, ChartPoint, DonutDatum } from "../../components/charts/chartMath";
+import type { CashflowBar, ChartPoint, DonutDatum, ForecastChartPoint } from "../../components/charts/chartMath";
 import EmptyState from "../../components/data/EmptyState";
 import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
@@ -16,8 +16,14 @@ import { formatMoney, minorUnitFactor } from "../../lib/money";
 import { usePreferences } from "../../lib/preferences";
 import { qk } from "../../lib/queries";
 import { CategoryChart } from "../analytics/CategoryChart";
+import { ForecastArea } from "../analytics/ForecastArea";
 import { ChartEmpty, ChartError, GraphCard } from "../analytics/GraphCard";
-import { useCashflow, useNetWorthSeries, useSpendingByCategory } from "../analytics/useAnalytics";
+import {
+  useCashflow,
+  useForecast,
+  useNetWorthSeries,
+  useSpendingByCategory,
+} from "../analytics/useAnalytics";
 import { useLoans } from "../loans/useLoans";
 import { usePortfolios } from "../portfolio/usePortfolios";
 import AccountsSnapshot from "./AccountsSnapshot";
@@ -26,7 +32,10 @@ import { buildBalanceSeries } from "./balanceSeries";
 import type { TransactionLite } from "./balanceSeries";
 import { selectPrimaryAccount } from "./balances";
 import type { AccountSummary, AssetSummary } from "./balances";
+import CommittedMonthlyCard from "./CommittedMonthlyCard";
+import NetWorthChangeCard from "./NetWorthChangeCard";
 import RecentActivity from "./RecentActivity";
+import SavingsRateCard from "./SavingsRateCard";
 import UpcomingWidget from "./UpcomingWidget";
 
 interface KeysetResponse<T> {
@@ -46,16 +55,6 @@ function monthLabel(iso: string, locale?: string): string {
   }).format(new Date(iso));
 }
 
-/** Compact day-and-month axis label for the net-worth series (daily snapshots),
- * read in UTC for the same timezone-stability reason. */
-function shortDate(iso: string, locale?: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(iso));
-}
-
 /** A compact money axis tick ($1.2k, ¥3M) from integer minor units — full
  * amounts stay on the tooltips (via `formatMoney`); the axis gets the short
  * form so long tick labels don't crowd the plot. Divides by the currency's
@@ -69,81 +68,12 @@ function compactMoney(minor: number, currency: string, locale?: string): string 
   }).format(minor / minorUnitFactor(currency, locale));
 }
 
-/** Net worth is a level over time — a single **neutral** balance series
- * (`--pc-text`/white), never colored by direction (§9.1). */
-const netWorthConfig = {
-  valueMinor: { label: "Net worth", color: "var(--pc-text)" },
-} satisfies ChartConfig;
-
 /** Income vs spend is real value movement, so it keeps the semantic pair:
  * income emerald (`--pc-positive`), spend coral (`--pc-negative`) (§9.1). */
 const cashflowConfig = {
   income: { label: "Income", color: "var(--pc-positive)" },
   spend: { label: "Spend", color: "var(--pc-negative)" },
 } satisfies ChartConfig;
-
-/**
- * Net worth over time — a Recharts `AreaChart` of the single neutral balance
- * series (x = snapshot date, y = amount). `isAnimationActive` is off so the
- * draw-in never fights the reduced-motion policy and the render is
- * deterministic; the labeled `ChartContainer` (`role="img"` + a trend
- * `aria-label`) carries the summary for assistive tech.
- */
-function NetWorthChart({
-  points,
-  currency,
-  locale,
-}: {
-  points: ChartPoint[];
-  currency: string;
-  locale?: string;
-}) {
-  return (
-    <ChartContainer
-      config={netWorthConfig}
-      className="h-64 w-full"
-      role="img"
-      aria-label={describeTrend("Net worth", points, currency, locale)}
-    >
-      <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 4 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="date"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          minTickGap={24}
-          tickFormatter={(value) => shortDate(String(value), locale)}
-        />
-        <YAxis
-          width={56}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(value) => compactMoney(Number(value), currency, locale)}
-        />
-        <ChartTooltip
-          content={
-            <ChartTooltipContent
-              labelFormatter={(label) => shortDate(String(label), locale)}
-              valueFormatter={(value) => formatMoney(Number(value), currency, locale)}
-            />
-          }
-        />
-        <Area
-          dataKey="valueMinor"
-          type="monotone"
-          stroke="var(--color-valueMinor)"
-          fill="var(--color-valueMinor)"
-          fillOpacity={0.08}
-          strokeWidth={1.5}
-          dot={false}
-          activeDot={{ r: 3 }}
-          isAnimationActive={false}
-        />
-      </AreaChart>
-    </ChartContainer>
-  );
-}
 
 /** One legend swatch + label — a colored mark carries identity, the text
  * stays in an ink token (dataviz: text never wears the series color). */
@@ -249,13 +179,14 @@ const TRANSACTIONS_FETCH_LIMIT = 60;
  * The Dashboard — Pecunia's showpiece screen, mounted at `/`. Assembles
  * `/accounts` + `/assets` into a per-currency net-worth summary
  * (`BalanceTiles`), charts the snapshot-backed **net worth over time** as the
- * single headline area (`NetWorthChart` over `/analytics/net-worth`), breaks
- * cashflow and spending into their own graphs, and previews accounts + recent
- * activity. The primary account's own recent-balance trend (reconstructed from
- * `/transactions`) is demoted to the inline sparkline inside `AccountsSnapshot`
- * — not a second full-width line chart. A fresh instance with no accounts gets
- * a welcoming empty state instead of an empty grid of zeroes — the app is fully
- * usable with nothing (the firm contract).
+ * single headline figure (`ForecastArea` over `/analytics/net-worth`, with a
+ * dashed projected tail appended from `/analytics/forecast` — Track O, v1.4),
+ * breaks cashflow and spending into their own graphs, and previews accounts +
+ * recent activity. The primary account's own recent-balance trend
+ * (reconstructed from `/transactions`) is demoted to the inline sparkline
+ * inside `AccountsSnapshot` — not a second full-width line chart. A fresh
+ * instance with no accounts gets a welcoming empty state instead of an empty
+ * grid of zeroes — the app is fully usable with nothing (the firm contract).
  */
 function Dashboard() {
   const navigate = useNavigate();
@@ -328,11 +259,22 @@ function Dashboard() {
   const netWorthQuery = useNetWorthSeries();
   const cashflowQuery = useCashflow();
   const categoryQuery = useSpendingByCategory();
+  // The forecast engine (Track O, v1.4) — the net-worth chart's dashed
+  // projected tail, appended after the real history above.
+  const forecastQuery = useForecast();
 
   const netWorthPoints: ChartPoint[] = (netWorthQuery.data ?? []).map((point) => ({
     date: point.date,
     valueMinor: point.net_worth_minor,
   }));
+  const netWorthProjected: ForecastChartPoint[] = (forecastQuery.data?.net_worth ?? []).map(
+    (point) => ({
+      date: point.date,
+      valueMinor: point.value_minor,
+      lowerMinor: point.lower_minor,
+      upperMinor: point.upper_minor,
+    }),
+  );
   const cashflowBars: CashflowBar[] = (cashflowQuery.data ?? []).map((point) => ({
     periodStart: point.period_start,
     incomeMinor: point.income_minor,
@@ -390,6 +332,12 @@ function Dashboard() {
         baseCurrency={baseCurrency}
       />
 
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <SavingsRateCard />
+        <CommittedMonthlyCard />
+        <NetWorthChangeCard />
+      </div>
+
       <GraphCard title="Net worth over time">
         {netWorthQuery.isError ? (
           <ChartError />
@@ -400,7 +348,16 @@ function Dashboard() {
               : "No net-worth history yet — it builds up as your balances and assets change."}
           </ChartEmpty>
         ) : (
-          <NetWorthChart points={netWorthPoints} currency={baseCurrency} locale={preferences.locale} />
+          <ForecastArea
+            data={{ history: netWorthPoints, projected: netWorthProjected }}
+            metric="net_worth"
+            currency={baseCurrency}
+            locale={preferences.locale}
+            ariaLabel={describeTrend("Net worth", netWorthPoints, baseCurrency, preferences.locale)}
+            empty={
+              <ChartEmpty>No net-worth history yet — it builds up as your balances and assets change.</ChartEmpty>
+            }
+          />
         )}
       </GraphCard>
 

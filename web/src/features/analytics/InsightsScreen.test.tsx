@@ -33,6 +33,7 @@ interface Overrides {
   spendingByCategory?: Record<string, unknown[]>;
   netWorthComposition?: Record<string, unknown[]>;
   projects?: unknown[];
+  forecast?: Record<string, unknown>;
 }
 
 function mockEndpoints(overrides: Overrides = {}) {
@@ -48,6 +49,9 @@ function mockEndpoints(overrides: Overrides = {}) {
     }
     if (path.startsWith("/analytics/spending-by-category")) {
       return Promise.resolve(overrides.spendingByCategory ?? {});
+    }
+    if (path.startsWith("/analytics/forecast")) {
+      return Promise.resolve(overrides.forecast ?? {});
     }
     if (path.startsWith("/projects")) {
       return Promise.resolve({ items: overrides.projects ?? [], next_cursor: null });
@@ -344,7 +348,34 @@ describe("InsightsScreen", () => {
     expect(await screen.findByText(/no contact spending in this period yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no spending to break down yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no project spending recorded yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no committed transactions to project yet/i)).toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("charts a cash forecast with a dashed line and band from /analytics/forecast, ignoring the period selector", async () => {
+    mockEndpoints({
+      forecast: {
+        USD: {
+          cash: [
+            { date: "2026-10-31", value_minor: 50000, lower_minor: 40000, upper_minor: 60000, projected: true },
+            { date: "2026-11-30", value_minor: 30000, lower_minor: 10000, upper_minor: 50000, projected: true },
+          ],
+          net_worth: [],
+        },
+      },
+    });
+
+    const { container } = renderScreen();
+
+    expect(await screen.findByRole("heading", { name: /cash forecast/i })).toBeInTheDocument();
+    const figure = await screen.findByRole("img", { name: /cash forecast/i });
+    expect(figure).toBeInTheDocument();
+    // The dashed projected line (no history was fetched for cash) plus the band.
+    const lines = container.querySelectorAll(".recharts-line-curve");
+    expect(Array.from(lines).some((line) => line.getAttribute("stroke-dasharray"))).toBe(true);
+    expect(container.querySelectorAll(".recharts-area").length).toBeGreaterThan(0);
+    // The zero reference line flags a projected balance going negative.
+    expect(container.querySelector(".recharts-reference-line")).not.toBeNull();
   });
 
   it("routes to the Insights screen from the sidebar nav entry", async () => {
