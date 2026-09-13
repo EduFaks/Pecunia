@@ -36,12 +36,16 @@ export interface AssetPage {
   next_cursor: string | null;
 }
 
-/** Mirrors `AssetIn`. */
+/** Mirrors `AssetIn`. `value_minor`/`as_of` record an optional first
+ * valuation at creation time (both present together, or both omitted —
+ * `as_of` is required whenever `value_minor` is given). */
 export interface CreateAssetPayload {
   name: string;
   type: AssetType;
   currency: string;
   acquired_on?: string | null;
+  value_minor?: number;
+  as_of?: string;
 }
 
 /** Mirrors `AssetUpdate` — every field optional, only what changed is sent. */

@@ -11,7 +11,7 @@ from pecunia.db import get_db
 from pecunia.models.asset import Asset, AssetType, AssetValuation
 from pecunia.money import CurrencyStr, MinorInt
 from pecunia.pagination import DEFAULT_LIMIT
-from pecunia.services.assets import UNSET, AssetService
+from pecunia.services.assets import UNSET, AssetService, ValuationAsOfRequiredError
 
 router = APIRouter(prefix="/assets", tags=["assets"], dependencies=[Depends(require_initialized)])
 
@@ -21,6 +21,12 @@ class AssetIn(BaseModel):
     type: AssetType
     currency: CurrencyStr
     acquired_on: date | None = None
+    # Optional initial valuation, recorded as the asset's first
+    # `AssetValuation` row (`AssetService.create`). `as_of` is required
+    # whenever `value_minor` is given — see `create_asset`'s
+    # `ValuationAsOfRequiredError` handling.
+    value_minor: MinorInt | None = None
+    as_of: date | None = None
 
 
 class AssetUpdate(BaseModel):
@@ -123,13 +129,18 @@ async def create_asset(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
 ) -> AssetOut:
     svc = AssetService(db)
-    asset = await svc.create(
-        wsctx.workspace_id,
-        name=body.name,
-        type=body.type.value,
-        currency=body.currency,
-        acquired_on=body.acquired_on,
-    )
+    try:
+        asset = await svc.create(
+            wsctx.workspace_id,
+            name=body.name,
+            type=body.type.value,
+            currency=body.currency,
+            acquired_on=body.acquired_on,
+            value_minor=body.value_minor,
+            as_of=body.as_of,
+        )
+    except ValuationAsOfRequiredError:
+        raise HTTPException(status_code=422, detail="VALUATION_AS_OF_REQUIRED") from None
     await db.commit()
     return AssetOut.from_model(asset, await svc.current_value(asset))
 

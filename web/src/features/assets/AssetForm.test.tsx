@@ -81,6 +81,53 @@ describe("AssetForm — create", () => {
     renderForm();
     expect(screen.getByRole("button", { name: /create asset/i })).toBeDisabled();
   });
+
+  it("includes value_minor and as_of when a current value is entered", async () => {
+    mockApiFetch.mockResolvedValue(ASSET);
+    const { onSuccess } = renderForm();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "1967 Mustang" } });
+    fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
+    fireEvent.change(screen.getByLabelText(/current value/i), { target: { value: "45000.00" } });
+    fireEvent.change(screen.getByLabelText(/as of/i), { target: { value: "2020-01-01" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /create asset/i }));
+
+    await waitFor(() =>
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        "/assets",
+        expect.objectContaining({
+          json: expect.objectContaining({ value_minor: 4_500_000, as_of: "2020-01-01" }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(ASSET));
+  });
+
+  it("omits value_minor and as_of when the current value is left blank", async () => {
+    mockApiFetch.mockResolvedValue(ASSET);
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Watch" } });
+    fireEvent.click(screen.getByRole("button", { name: /create asset/i }));
+
+    await waitFor(() =>
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        "/assets",
+        expect.objectContaining({
+          json: expect.not.objectContaining({ value_minor: expect.anything() }),
+        }),
+      ),
+    );
+    const [, options] = mockApiFetch.mock.calls[0]!;
+    expect((options as { json: Record<string, unknown> }).json).not.toHaveProperty("as_of");
+  });
+
+  it("defaults the as-of date to today", () => {
+    renderForm();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(screen.getByLabelText(/as of/i)).toHaveValue(today);
+  });
 });
 
 describe("AssetForm — edit", () => {
@@ -95,6 +142,13 @@ describe("AssetForm — edit", () => {
     expect(screen.getByLabelText("Type")).toHaveValue("vehicle");
     expect(screen.getByLabelText("Currency")).toHaveValue("USD");
     expect(screen.getByLabelText(/acquired/i)).toHaveValue("2020-01-01");
+  });
+
+  it("does not show a current-value field — value history lives on the detail page", () => {
+    renderForm({ asset: ASSET });
+
+    expect(screen.queryByLabelText(/current value/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/as of/i)).not.toBeInTheDocument();
   });
 
   it("patches the changed fields on save", async () => {
