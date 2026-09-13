@@ -37,7 +37,7 @@ export function PeriodSelector({ value, onChange, includeAllTime = true }: Perio
     <div
       role="group"
       aria-label="Reporting period"
-      className="inline-flex w-fit rounded-pc border border-hairline p-0.5"
+      className="inline-flex w-fit flex-wrap rounded-pc border border-hairline p-0.5"
     >
       {PERIOD_OPTIONS.map((option) => {
         const pressed = value.kind === "months" && value.months === option.months;

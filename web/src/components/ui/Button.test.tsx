@@ -66,4 +66,11 @@ describe("Button", () => {
     render(<Button variant="destructive">Delete</Button>);
     expect(screen.getByRole("button").className).toMatch(/bg-negative/);
   });
+
+  it("gives size=\"sm\" a taller, comfortable touch target on mobile (py-2.5) while reverting to the compact desktop height at sm: (py-1.5) — dense row actions (transactions, subscriptions, table rows) all use size=\"sm\"", () => {
+    render(<Button size="sm">Edit</Button>);
+    const className = screen.getByRole("button").className;
+    expect(className).toMatch(/\bpy-2\.5\b/);
+    expect(className).toMatch(/\bsm:py-1\.5\b/);
+  });
 });

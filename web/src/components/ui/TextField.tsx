@@ -11,7 +11,7 @@ export interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const textFieldInputClasses =
-  "w-full rounded-pc border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 ease-pc";
+  "w-full rounded-pc border bg-surface-2 px-3 py-2 text-base sm:text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 ease-pc";
 
 /** Labeled single-line text input with description/error slots, wired for
  * `aria-invalid`/`aria-describedby`. `PasswordField` shares this input

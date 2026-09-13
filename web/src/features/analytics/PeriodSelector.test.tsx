@@ -49,4 +49,11 @@ describe("PeriodSelector", () => {
     expect(screen.queryByRole("button", { name: "All time" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "24 months" })).toBeInTheDocument();
   });
+
+  it("wraps its up-to-5 toggles onto a second line instead of overflowing a narrow (360px) viewport", () => {
+    render(<PeriodSelector value={{ kind: "months", months: 12 }} onChange={() => {}} />);
+    expect(screen.getByRole("group", { name: "Reporting period" }).className).toMatch(
+      /\bflex-wrap\b/,
+    );
+  });
 });

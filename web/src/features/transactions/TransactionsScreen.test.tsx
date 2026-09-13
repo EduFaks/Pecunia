@@ -370,6 +370,21 @@ describe("TransactionsScreen", () => {
     expect(await screen.findByText("Coffee")).toBeInTheDocument();
   });
 
+  it("wraps a row's action buttons onto their own line instead of squeezing them against the description on a narrow viewport", async () => {
+    seed([CHECKING], [GROCERIES]);
+    renderScreen();
+
+    const row = (await screen.findByText("Groceries")).closest("li")!;
+    const deleteButton = within(row).getByRole("button", { name: /delete/i });
+    // The actions cluster (Apply to loan / Edit / Delete) wraps as a group...
+    expect(deleteButton.parentElement?.className).toMatch(/\bflex-wrap\b/);
+    // ...inside a row that stacks to full width on mobile and reverts to the
+    // original single-line, right-aligned layout at `sm:` and up.
+    const amountAndActions = deleteButton.parentElement?.parentElement;
+    expect(amountAndActions?.className).toMatch(/\bflex-wrap\b/);
+    expect(amountAndActions?.className).toMatch(/\bsm:flex-nowrap\b/);
+  });
+
   it("soft-deletes a transaction, removing it from the list, and restores it via the toast's Undo action", async () => {
     seed([CHECKING], [GROCERIES]);
     renderScreen();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import TextField from "./TextField";
+import TextField, { textFieldInputClasses } from "./TextField";
 
 describe("TextField", () => {
   it("associates the label with the input", () => {
@@ -28,5 +28,12 @@ describe("TextField", () => {
   it("applies the shared white focus-visible ring", () => {
     render(<TextField label="Email" value="" onChange={() => {}} />);
     expect(screen.getByLabelText("Email").className).toMatch(/focus-visible:outline-focus/);
+  });
+
+  it("renders 16px on mobile (text-base) and reverts to the compact 14px at sm: and up, so iOS never auto-zooms on focus", () => {
+    expect(textFieldInputClasses).toMatch(/\btext-base\b/);
+    expect(textFieldInputClasses).toMatch(/\bsm:text-sm\b/);
+    render(<TextField label="Email" value="" onChange={() => {}} />);
+    expect(screen.getByLabelText("Email").className).toMatch(/\btext-base\b/);
   });
 });

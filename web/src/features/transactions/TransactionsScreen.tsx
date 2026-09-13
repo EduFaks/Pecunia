@@ -269,7 +269,12 @@ function TransactionsScreen() {
           const isApplying = applyingTransaction?.id === transaction.id;
           return (
             <div className="flex flex-col gap-3 py-3">
-            <div className="flex items-center justify-between gap-4">
+            {/* Stacks on mobile (metadata, then amount+actions on their own
+                full-width line) so the action cluster never has to squeeze
+                into whatever sliver of width is left beside the
+                description; reverts to the original single-line layout at
+                `sm:` and up. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="min-w-0">
                 <p className="truncate text-sm text-ink">{transaction.description}</p>
                 <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
@@ -298,50 +303,56 @@ function TransactionsScreen() {
                   )}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-4">
+              {/* `w-full`+`justify-between` keeps the amount pinned left and
+                  the action cluster free to wrap to its right (or its own
+                  line) on mobile; `sm:w-auto sm:justify-end sm:flex-nowrap`
+                  restores the original fixed, non-wrapping desktop row. */}
+              <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:flex-nowrap sm:justify-end sm:gap-4">
                 <MoneyText minor={transaction.amount_minor} currency={transaction.currency} colorBySign />
-                {isLeg ? (
-                  // Edit routes to the transfer editor (delete lives inside it);
-                  // the normal transaction edit/delete would 409 on a leg. The
-                  // button waits for the transfer to resolve so it can prefill.
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={transfer === null}
-                    onClick={() => transfer && setFormState({ mode: "transfer-edit", transfer })}
-                  >
-                    Edit
-                  </Button>
-                ) : (
-                  <>
+                <div className="flex flex-wrap items-center gap-2">
+                  {isLeg ? (
+                    // Edit routes to the transfer editor (delete lives inside it);
+                    // the normal transaction edit/delete would 409 on a leg. The
+                    // button waits for the transfer to resolve so it can prefill.
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() =>
-                        setApplyingTransaction((current) =>
-                          current?.id === transaction.id ? null : transaction,
-                        )
-                      }
-                    >
-                      {isApplying ? "Cancel" : "Apply to loan"}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setFormState({ mode: "edit", transaction })}
+                      disabled={transfer === null}
+                      onClick={() => transfer && setFormState({ mode: "transfer-edit", transfer })}
                     >
                       Edit
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      loading={deleteTransaction.isPending}
-                      onClick={() => void handleDelete(transaction)}
-                    >
-                      Delete
-                    </Button>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setApplyingTransaction((current) =>
+                            current?.id === transaction.id ? null : transaction,
+                          )
+                        }
+                      >
+                        {isApplying ? "Cancel" : "Apply to loan"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setFormState({ mode: "edit", transaction })}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={deleteTransaction.isPending}
+                        onClick={() => void handleDelete(transaction)}
+                      >
+                        Delete
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
