@@ -71,7 +71,7 @@ function CoinPicker({
   }, [value]);
 
   const debouncedQuery = useDebouncedValue(inputValue, 300);
-  const coinsQuery = useCoinSearch(debouncedQuery, open);
+  const coinsQuery = useCoinSearch(debouncedQuery, open && debouncedQuery.trim() !== "");
   const matches = coinsQuery.data ?? [];
 
   useEffect(() => {
@@ -224,6 +224,11 @@ function CoinPicker({
               );
             })}
           </ul>
+        ) : null}
+        {open && coinsQuery.isError ? (
+          <p className="mt-1.5 text-xs text-ink-faint">
+            Coin list unavailable — enter the id manually.
+          </p>
         ) : null}
       </div>
     </div>

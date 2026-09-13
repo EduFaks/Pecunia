@@ -69,4 +69,27 @@ describe("CoinPicker", () => {
     renderPicker(vi.fn(), "bitcoin");
     expect(screen.getByRole("combobox")).toHaveValue("bitcoin");
   });
+
+  it("does not query the coin-search proxy on focus alone, before any text is typed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderPicker();
+
+    fireEvent.focus(screen.getByRole("combobox"));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(mockApiFetch).not.toHaveBeenCalled();
+  });
+
+  it("shows a muted fallback message when the coin search fails", async () => {
+    mockApiFetch.mockReset().mockRejectedValue(new Error("network down"));
+    renderPicker();
+
+    fireEvent.focus(screen.getByRole("combobox"));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "bit" } });
+
+    expect(await screen.findByText(/coin list unavailable.*enter the id manually/i)).toBeInTheDocument();
+  });
 });
