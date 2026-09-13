@@ -1,0 +1,66 @@
+/**
+ * Pecunia design tokens — the identity.
+ *
+ * Dark-first. The `[data-theme="light"]` stub is reserved for a later plan;
+ * do NOT rely on it in V1 (see docs/CONVENTIONS.md §9).
+ */
+
+:root {
+  /* Grounds — near-black, minimal-tech */
+  --pc-canvas: #0a0a0b;
+  --pc-surface-1: #151517; /* cards */
+  --pc-surface-2: #1d1d20; /* raised cards, popovers */
+  --pc-surface-3: #262629; /* overlays, menus */
+
+  /* Hairlines — cool, extremely subtle */
+  --pc-hairline: rgba(255, 255, 255, 0.09);
+  --pc-hairline-strong: rgba(255, 255, 255, 0.15);
+
+  /* Ink — near-white, cool greys */
+  --pc-text: #f5f5f5;
+  --pc-text-secondary: #a0a0a5;
+  --pc-text-faint: #6b6b70;
+
+  /* White — the sole interactive accent */
+  --pc-accent: #fafafa;
+  --pc-accent-hover: #e4e4e7;
+  --pc-accent-soft: rgba(255, 255, 255, 0.1);
+  /* Text/icons rendered ON a filled --pc-accent surface: the accent is now
+     white, so anything sitting on top of it must be dark — never assume
+     --pc-canvas is dark enough on its own (the two tokens can diverge). */
+  --pc-on-accent: #0a0a0b;
+
+  /* Semantic value movement — reserved for real deltas, never decoration */
+  --pc-positive: #4fb286; /* muted emerald */
+  --pc-negative: #e0695f; /* muted coral */
+
+  /* Data-viz categorical palette — the ONE sanctioned place vibrant color is
+     used (charts + category chips, see docs/CONVENTIONS.md §9.1). Tuned to read
+     on the near-black canvas and to stay distinct from the emerald/coral value-
+     movement pair. These same 8 hexes are the category `PALETTE` (mirrored in
+     api/src/pecunia/models/category.py + web categoryTypes.ts). */
+  --chart-1: #22d3ee; /* cyan */
+  --chart-2: #a78bfa; /* violet */
+  --chart-3: #fbbf24; /* amber */
+  --chart-4: #fb7185; /* rose */
+  --chart-5: #38bdf8; /* sky */
+  --chart-6: #a3e635; /* lime */
+  --chart-7: #fb923c; /* orange */
+  --chart-8: #e879f9; /* fuchsia */
+
+  /* Focus */
+  --pc-focus: #fafafa;
+
+  /* Radii, shadow, motion */
+  --pc-radius: 6px;
+  --pc-radius-lg: 10px;
+  --pc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --pc-shadow-2: 0 10px 40px rgba(0, 0, 0, 0.5);
+  --pc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --pc-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Light theme reserved for a later plan — do NOT rely on it in V1. */
+:root[data-theme="light"] {
+  /* intentionally empty stub; light palette is future work */
+}

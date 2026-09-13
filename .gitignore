@@ -1,0 +1,22 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+
+# env & data
+.env
+/data/
+
+# node (web/)
+node_modules/
+web/dist/
+web/*.tsbuildinfo
+
+web/e2e/screenshots/
+web/test-results/
+web/test-results-ship/
+web/playwright-report/
+web/playwright-report-ship/

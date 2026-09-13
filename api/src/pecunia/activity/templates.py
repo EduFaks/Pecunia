@@ -1,0 +1,17 @@
+class Activity:
+    """Activity-feed template keys. The frontend renders these + params (i18n)."""
+
+    ACCOUNT_CREATED = "activity.account.created"
+    TRANSACTION_CREATED = "activity.transaction.created"
+    TRANSFER_CREATED = "activity.transfer.created"
+    PROJECT_CREATED = "activity.project.created"
+    PROJECT_TARGET_REACHED = "activity.project.target_reached"
+    ASSET_CREATED = "activity.asset.created"
+    ASSET_VALUATION_CHANGED = "activity.asset.valuation_changed"
+    PORTFOLIO_CREATED = "activity.portfolio.created"
+    HOLDING_PRICE_CHANGED = "activity.holding.price_changed"
+    LOAN_CREATED = "activity.loan.created"
+    BUDGET_CREATED = "activity.budget.created"
+    CATEGORY_CREATED = "activity.category.created"
+    SCHEDULED_TRANSACTION_CREATED = "activity.scheduled_transaction.created"
+    SUBSCRIPTION_CREATED = "activity.subscription.created"

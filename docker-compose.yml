@@ -1,0 +1,58 @@
+services:
+  pecunia-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${PECUNIA_DB_USER:-pecunia}
+      POSTGRES_PASSWORD: ${PECUNIA_DB_PASSWORD:-pecunia}
+      POSTGRES_DB: ${PECUNIA_DB_NAME:-pecunia}
+    volumes:
+      - pecunia_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PECUNIA_DB_USER:-pecunia} -d ${PECUNIA_DB_NAME:-pecunia}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks: [pecunia]
+
+  pecunia-api:
+    build: ./api
+    depends_on:
+      pecunia-db:
+        condition: service_healthy
+    environment:
+      PECUNIA_DATABASE_URL: postgresql+asyncpg://${PECUNIA_DB_USER:-pecunia}:${PECUNIA_DB_PASSWORD:-pecunia}@pecunia-db:5432/${PECUNIA_DB_NAME:-pecunia}
+      PECUNIA_SECRET_KEY: ${PECUNIA_SECRET_KEY:-}
+      PECUNIA_CONFIG_DIR: /data/config
+      PECUNIA_TRUSTED_PROXIES_RAW: ${PECUNIA_WEB_IP:-10.89.0.10}
+      PECUNIA_SERVER_NAMES_RAW: ${PECUNIA_SERVER_NAMES_RAW:-}
+      PECUNIA_SETUP_TOKEN: ${PECUNIA_SETUP_TOKEN:-}
+    volumes:
+      - pecunia_config:/data/config
+      - pecunia_files:/data/files
+    restart: unless-stopped
+    networks: [pecunia]
+
+  pecunia-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    depends_on: [pecunia-api]
+    ports:
+      - "${PECUNIA_PORT:-8480}:80"
+    restart: unless-stopped
+    networks:
+      pecunia:
+        ipv4_address: ${PECUNIA_WEB_IP:-10.89.0.10}
+
+networks:
+  pecunia:
+    ipam:
+      config:
+        - subnet: ${PECUNIA_SUBNET:-10.89.0.0/24}
+
+volumes:
+  pecunia_db_data:
+  pecunia_config:
+  pecunia_files:

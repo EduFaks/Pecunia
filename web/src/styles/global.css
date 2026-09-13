@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+/* The `--pc-*` tokens are the single source of truth (see tokens.css). This
+   `@theme` block only maps them into Tailwind's utility namespaces so
+   `bg-canvas`, `text-ink-2`, `border-hairline`, `font-display`, etc. exist. */
+@theme {
+  /* Grounds */
+  --color-canvas: var(--pc-canvas);
+  --color-surface-1: var(--pc-surface-1);
+  --color-surface-2: var(--pc-surface-2);
+  --color-surface-3: var(--pc-surface-3);
+
+  /* Hairlines */
+  --color-hairline: var(--pc-hairline);
+  --color-hairline-strong: var(--pc-hairline-strong);
+
+  /* Ink */
+  --color-ink: var(--pc-text);
+  --color-ink-2: var(--pc-text-secondary);
+  --color-ink-faint: var(--pc-text-faint);
+
+  /* White accent */
+  --color-accent: var(--pc-accent);
+  --color-accent-hover: var(--pc-accent-hover);
+  --color-accent-soft: var(--pc-accent-soft);
+  /* Text/icons on a filled accent surface — `text-on-accent`/`bg-on-accent`. */
+  --color-on-accent: var(--pc-on-accent);
+
+  /* Semantic value movement */
+  --color-positive: var(--pc-positive);
+  --color-negative: var(--pc-negative);
+
+  /* Data-viz categorical palette — makes `fill-chart-1`/`stroke-chart-1`/
+     `text-chart-1`/`bg-chart-1` (through 8) exist for charts. */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+
+  /* Focus */
+  --color-focus: var(--pc-focus);
+
+  /* Type — system stacks only, no self-hosted webfonts. */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI",
+    system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI",
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Radii, shadow, motion */
+  --radius-pc: var(--pc-radius);
+  --radius-pc-lg: var(--pc-radius-lg);
+  --shadow-pc-1: var(--pc-shadow-1);
+  --shadow-pc-2: var(--pc-shadow-2);
+  --ease-pc: var(--pc-ease);
+  --ease-pc-out: var(--pc-ease-out);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--pc-canvas);
+    color: var(--pc-text);
+    font-family: var(--font-sans);
+  }
+
+  /* Monetary and other tabular figures always align on their digits. */
+  .tabular-figures,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--pc-focus);
+    outline-offset: 2px;
+  }
+
+  /* Step headings receive programmatic focus purely to announce the new step
+     to assistive tech (see WizardShell). They are tabindex=-1 and never
+     keyboard-reachable, so suppressing their focus ring costs no accessibility
+     — and it removes a white box that otherwise frames the heading. */
+  .step-focus-target:focus-visible {
+    outline: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      animation-delay: 0ms !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* The app's single, restrained entrance vocabulary: a quiet fade plus a few-px
+   upward settle on mount, ~260ms on the `--pc-ease-out` token. Applied once to
+   top-level screen content (the routed content in `AppShell`, keyed by path so
+   it replays on navigation) — hovers already carry the rest; there is no
+   bounce, parallax, loop, or per-row motion (over-animation reads as
+   generated). Pure CSS animation, so the content is always in the DOM and stays
+   test-queryable. `backwards` fill shows the from-state before the first frame
+   without persisting a `transform` afterward — a lingering `translateY(0)`
+   would establish a containing block and dislodge the `fixed` ConfirmDialog /
+   Toast overlays. The `prefers-reduced-motion: reduce` rule above already zeroes
+   `animation-duration` for every element (`!important` wins across layers), so
+   this needs no JS/`matchMedia` guard to be motion-safe. */
+@keyframes pc-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pc-reveal {
+  animation: pc-reveal 260ms var(--pc-ease-out) backwards;
+}

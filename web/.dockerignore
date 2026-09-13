@@ -1,0 +1,8 @@
+node_modules
+dist
+playwright-report
+playwright-report-ship
+test-results
+e2e/screenshots
+*.tsbuildinfo
+.git
