@@ -170,6 +170,29 @@ describe("PlannedScreen", () => {
     expect(amount.className).toMatch(/text-negative/);
   });
 
+  it("shows the signed total upcoming across active schedules", async () => {
+    renderScreen();
+    await screen.findByText("Salary");
+
+    // 500000 (Salary) - 120000 (Rent) = 380000 -> $3,800.00, colored positive
+    // since active schedules net positive.
+    const summaryBlock = screen.getByText("Total upcoming").parentElement!;
+    const total = within(summaryBlock).getByText("$3,800.00");
+    expect(total).toBeInTheDocument();
+    expect(total.className).toMatch(/text-positive/);
+  });
+
+  it("excludes a paused schedule from the total upcoming", async () => {
+    schedules = [SALARY, { ...RENT, is_active: false }];
+    installBackend();
+    renderScreen();
+    await screen.findByText("Salary");
+
+    // Only SALARY (active) counts: 500000 -> $5,000.00.
+    const summaryBlock = screen.getByText("Total upcoming").parentElement!;
+    expect(within(summaryBlock).getByText("$5,000.00")).toBeInTheDocument();
+  });
+
   it("calls the post mutation when Post now is clicked", async () => {
     renderScreen();
     await screen.findByText("Rent");

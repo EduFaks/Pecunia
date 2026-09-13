@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
@@ -94,9 +94,44 @@ describe("AssetsScreen", () => {
     seedAssets([MUSTANG]);
     renderScreen();
 
-    expect(await screen.findByText("1967 Mustang")).toBeInTheDocument();
-    expect(screen.getByText("Vehicle")).toBeInTheDocument();
-    expect(screen.getByText(/45,000\.00/)).toBeInTheDocument();
+    const row = (await screen.findByText("1967 Mustang")).closest("li")!;
+    expect(within(row).getByText("Vehicle")).toBeInTheDocument();
+    expect(within(row).getByText(/45,000\.00/)).toBeInTheDocument();
+  });
+
+  it("shows the total current value per currency, excluding an unvalued asset", async () => {
+    const UNVALUED: AssetOut = {
+      id: "as2",
+      name: "New watch",
+      type: "watch",
+      currency: "USD",
+      acquired_on: null,
+      current_value_minor: null,
+      is_demo: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const VILLA: AssetOut = {
+      id: "as3",
+      name: "Villa",
+      type: "property",
+      currency: "EUR",
+      acquired_on: "2019-01-01",
+      current_value_minor: 30_000_000, // €300,000.00
+      is_demo: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    seedAssets([MUSTANG, UNVALUED, VILLA]);
+    renderScreen();
+
+    await screen.findByText("1967 Mustang");
+
+    const summaryBlock = screen.getByText("Total value").parentElement!;
+    // Only MUSTANG's USD value counts: $45,000.00 (the unvalued watch is skipped).
+    expect(within(summaryBlock).getByText(/45,000\.00/)).toBeInTheDocument();
+    // The EUR villa stays its own separate entry.
+    expect(within(summaryBlock).getByText(/300,000\.00/)).toBeInTheDocument();
   });
 
   it("creates an asset with the posted fields and shows it in the list", async () => {

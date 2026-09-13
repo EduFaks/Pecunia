@@ -114,9 +114,54 @@ describe("AccountsScreen", () => {
     seedAccounts([CHECKING]);
     renderScreen();
 
-    expect(await screen.findByText("Everyday")).toBeInTheDocument();
+    const row = (await screen.findByText("Everyday")).closest("li")!;
     expect(screen.getByText("Checking")).toBeInTheDocument(); // humanized type label
-    expect(screen.getByText(/1,500\.00/)).toBeInTheDocument();
+    expect(within(row).getByText(/1,500\.00/)).toBeInTheDocument();
+  });
+
+  it("shows the total balance per currency, keeping a negative account and a second currency separate", async () => {
+    const SAVINGS: AccountOut = {
+      ...CHECKING,
+      id: "a2",
+      name: "Savings",
+      balance_minor: 50000, // $500.00
+    };
+    const OVERDRAWN: AccountOut = {
+      ...CHECKING,
+      id: "a3",
+      name: "Credit card",
+      balance_minor: -20000, // -$200.00
+    };
+    const EURO: AccountOut = {
+      ...CHECKING,
+      id: "a4",
+      name: "Reise",
+      currency: "EUR",
+      balance_minor: 10000, // €100.00
+    };
+    seedAccounts([CHECKING, SAVINGS, OVERDRAWN, EURO]);
+    renderScreen();
+
+    await screen.findByText("Everyday");
+
+    const summaryBlock = screen.getByText("Total balance").parentElement!;
+    // 150000 + 50000 - 20000 = 180000 minor -> $1,800.00
+    const total = within(summaryBlock).getByText(/1,800\.00/);
+    expect(total).toBeInTheDocument();
+    expect(total).not.toHaveClass("text-negative");
+    // The EUR account stays its own separate entry (never summed into USD).
+    expect(within(summaryBlock).getByText(/100\.00/)).toBeInTheDocument();
+  });
+
+  it("flags a negative total balance coral", async () => {
+    const OVERDRAWN: AccountOut = { ...CHECKING, balance_minor: -50000 }; // -$500.00
+    seedAccounts([OVERDRAWN]);
+    renderScreen();
+
+    await screen.findByText("Everyday");
+
+    const total = screen.getByText("Total balance").parentElement!;
+    expect(within(total).getByText(/-\$500\.00/)).toHaveClass("text-negative");
   });
 
   it("creates an account with the posted fields and shows it in the list", async () => {

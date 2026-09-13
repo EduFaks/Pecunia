@@ -5,6 +5,8 @@ import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import Pill from "../../components/ui/Pill";
 import Spinner from "../../components/ui/Spinner";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import EmptyState from "../../components/data/EmptyState";
 import { DateText, MoneyText } from "../../lib/preferences";
@@ -13,6 +15,7 @@ import CategoryBadge from "../categories/CategoryBadge";
 import { useCategories } from "../categories/useCategories";
 import ContactBadge from "../contacts/ContactBadge";
 import { useContacts } from "../contacts/useContacts";
+import { sumByCurrency } from "../_shared/totals";
 import ScheduleForm from "./ScheduleForm";
 import {
   usePlanned,
@@ -182,6 +185,23 @@ function PlannedScreen() {
     contacts.find((contact) => contact.id === contactId) ?? null;
 
   const schedules = plannedQuery.data?.items ?? [];
+  // Paused schedules aren't actually coming due until resumed, so the
+  // "upcoming" total counts active ones only — signed, per currency, same
+  // convention each row's own `colorBySign` amount uses.
+  const upcomingStats: SummaryStat[] = [
+    {
+      label: "Total upcoming",
+      entries: sumByCurrency(
+        schedules.filter((schedule) => schedule.is_active),
+        (schedule) => schedule.amount_minor,
+        (schedule) => schedule.currency,
+      ).map(({ currency, total_minor }) => ({
+        currency,
+        value_minor: total_minor,
+        tone: total_minor > 0 ? "pos" : total_minor < 0 ? "neg" : undefined,
+      })),
+    },
+  ];
 
   async function handleDelete() {
     if (!deleting) {
@@ -205,6 +225,8 @@ function PlannedScreen() {
           New schedule
         </Button>
       </div>
+
+      {schedules.length > 0 ? <SummaryHeader stats={upcomingStats} /> : null}
 
       {formState ? (
         <Card>

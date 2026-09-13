@@ -118,6 +118,66 @@ describe("DataList", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't load/i);
   });
 
+  it("calls onItemsChange with the loaded items and hasNextPage once the first page resolves", async () => {
+    const fetchPage = vi.fn().mockResolvedValue(PAGE_1);
+    const onItemsChange = vi.fn();
+
+    renderWithQuery(
+      <DataList
+        queryKey={["items"]}
+        fetchPage={fetchPage}
+        renderRow={(item: Item) => <span>{item.name}</span>}
+        empty={<p>No items.</p>}
+        onItemsChange={onItemsChange}
+      />,
+    );
+
+    await screen.findByText("Alpha");
+
+    await waitFor(() => expect(onItemsChange).toHaveBeenCalledWith(PAGE_1.items, true));
+  });
+
+  it("calls onItemsChange again with the appended items and hasNextPage false after 'Load more'", async () => {
+    const fetchPage = vi.fn().mockResolvedValueOnce(PAGE_1).mockResolvedValueOnce(PAGE_2);
+    const onItemsChange = vi.fn();
+
+    renderWithQuery(
+      <DataList
+        queryKey={["items"]}
+        fetchPage={fetchPage}
+        renderRow={(item: Item) => <span>{item.name}</span>}
+        empty={<p>No items.</p>}
+        onItemsChange={onItemsChange}
+      />,
+    );
+
+    const loadMore = await screen.findByRole("button", { name: "Load more" });
+    fireEvent.click(loadMore);
+
+    await screen.findByText("Charlie");
+
+    await waitFor(() =>
+      expect(onItemsChange).toHaveBeenCalledWith([...PAGE_1.items, ...PAGE_2.items], false),
+    );
+  });
+
+  it("does not call onItemsChange while the first page is still loading", () => {
+    const fetchPage = vi.fn().mockReturnValue(new Promise(() => {})); // never resolves
+    const onItemsChange = vi.fn();
+
+    renderWithQuery(
+      <DataList
+        queryKey={["items"]}
+        fetchPage={fetchPage}
+        renderRow={(item: Item) => <span>{item.name}</span>}
+        empty={<p>No items.</p>}
+        onItemsChange={onItemsChange}
+      />,
+    );
+
+    expect(onItemsChange).not.toHaveBeenCalled();
+  });
+
   it("scrolls wide content in its own container rather than the page", async () => {
     const fetchPage = vi.fn().mockResolvedValue(PAGE_2);
 

@@ -5,8 +5,11 @@ import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
 import Card from "../../components/ui/Card";
 import Spinner from "../../components/ui/Spinner";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import { MoneyText, usePreferences } from "../../lib/preferences";
+import { sumByCurrency } from "../_shared/totals";
 import PortfolioForm from "./PortfolioForm";
 import { usePortfolios } from "./usePortfolios";
 import type { PortfolioOut } from "./usePortfolios";
@@ -35,6 +38,17 @@ function PortfolioScreen() {
   const [formState, setFormState] = useState<FormState | null>(null);
 
   const portfoliosQuery = usePortfolios();
+  const portfolios = portfoliosQuery.data?.items ?? [];
+  const grandTotalStats: SummaryStat[] = [
+    {
+      label: "Grand total",
+      entries: sumByCurrency(
+        portfolios,
+        (portfolio) => portfolio.value_minor,
+        (portfolio) => portfolio.currency,
+      ).map(({ currency, total_minor }) => ({ currency, value_minor: total_minor })),
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -42,6 +56,8 @@ function PortfolioScreen() {
         <h1 className="font-display text-2xl text-ink">Portfolio</h1>
         <Button onClick={() => setFormState({ mode: "create" })}>New portfolio</Button>
       </div>
+
+      {portfolios.length > 0 ? <SummaryHeader stats={grandTotalStats} /> : null}
 
       {formState ? (
         <Card>

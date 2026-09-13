@@ -175,6 +175,27 @@ describe("SubscriptionsScreen", () => {
     expect(document.querySelector('img[src="data:image/png;base64,AAAA"]')).toBeInTheDocument();
   });
 
+  it("keeps a second currency's monthly/annual totals as their own separate entries", async () => {
+    seed(
+      [NETFLIX],
+      {
+        USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 },
+        EUR: { monthly_minor: 500, annual_minor: 6000, count: 1 },
+      },
+    );
+    renderScreen();
+
+    await screen.findByText("Netflix");
+
+    const monthlyBlock = screen.getByText("Monthly spend").parentElement!;
+    expect(within(monthlyBlock).getByText("$15.99")).toBeInTheDocument();
+    expect(within(monthlyBlock).getByText("€5.00")).toBeInTheDocument();
+
+    const annualBlock = screen.getByText("Annualized").parentElement!;
+    expect(within(annualBlock).getByText("$191.88")).toBeInTheDocument();
+    expect(within(annualBlock).getByText("€60.00")).toBeInTheDocument();
+  });
+
   it("stacks a row and wraps its action buttons instead of squeezing four of them onto one cramped line on a narrow viewport", async () => {
     seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 } });
     renderScreen();

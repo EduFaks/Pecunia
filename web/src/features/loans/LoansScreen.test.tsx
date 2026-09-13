@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
@@ -129,13 +129,50 @@ describe("LoansScreen", () => {
     seedLoans([CAR_LOAN]);
     renderScreen();
 
-    expect(await screen.findByText("Car loan")).toBeInTheDocument();
-    expect(screen.getByText("Borrowed")).toBeInTheDocument();
+    const row = (await screen.findByText("Car loan")).closest("li")!;
+    expect(within(row).getByText("Borrowed")).toBeInTheDocument();
     // remaining_minor 2_000_000 → $20,000.00
-    expect(screen.getByText(/20,000\.00/)).toBeInTheDocument();
+    expect(within(row).getByText(/20,000\.00/)).toBeInTheDocument();
     // payoff bar at 500,000 / 2,500,000 = 20%
     const bar = screen.getByRole("progressbar", { name: /payoff progress/i });
     expect(bar).toHaveAttribute("aria-valuenow", "20");
+  });
+
+  it("shows total borrowed, total lent, and total remaining, kept separate by direction and currency", async () => {
+    const RECEIVABLE: LoanOut = {
+      id: "l2",
+      name: "Loaned to a friend",
+      direction: "lent",
+      principal_minor: 500_000, // $5,000.00
+      currency: "USD",
+      interest_rate_bps: null,
+      planned_payment_minor: null,
+      payment_frequency: null,
+      next_due: null,
+      opened_on: null,
+      description: null,
+      contact_id: null,
+      is_demo: false,
+      created_at: "2026-01-01T00:00:00Z",
+      paid_total_minor: 100_000,
+      remaining_minor: 400_000, // $4,000.00
+    };
+    seedLoans([CAR_LOAN, RECEIVABLE]);
+    renderScreen();
+
+    await screen.findByText("Car loan");
+
+    const borrowedBlock = screen.getByText("Total borrowed").parentElement!;
+    // Only CAR_LOAN is borrowed: remaining_minor 2_000_000 -> $20,000.00
+    expect(within(borrowedBlock).getByText(/20,000\.00/)).toBeInTheDocument();
+
+    const lentBlock = screen.getByText("Total lent").parentElement!;
+    // Only RECEIVABLE is lent: remaining_minor 400_000 -> $4,000.00
+    expect(within(lentBlock).getByText(/4,000\.00/)).toBeInTheDocument();
+
+    const remainingBlock = screen.getByText("Total remaining").parentElement!;
+    // Both loans combined: 2_000_000 + 400_000 = 2_400_000 -> $24,000.00
+    expect(within(remainingBlock).getByText(/24,000\.00/)).toBeInTheDocument();
   });
 
   it("creates a loan with the posted fields and shows it in the list", async () => {

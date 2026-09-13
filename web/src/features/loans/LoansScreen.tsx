@@ -6,8 +6,11 @@ import Callout from "../../components/ui/Callout";
 import Card from "../../components/ui/Card";
 import Pill from "../../components/ui/Pill";
 import Spinner from "../../components/ui/Spinner";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import { MoneyText, usePreferences } from "../../lib/preferences";
+import { sumByCurrency } from "../_shared/totals";
 import LoanForm from "./LoanForm";
 import LoanPayoffBar from "./LoanPayoffBar";
 import { useLoans } from "./useLoans";
@@ -34,6 +37,21 @@ function LoansScreen() {
   const [formState, setFormState] = useState<FormState | null>(null);
 
   const loansQuery = useLoans();
+  const loans = loansQuery.data?.items ?? [];
+
+  const remainingStat = (label: string, items: LoanOut[]): SummaryStat => ({
+    label,
+    entries: sumByCurrency(
+      items,
+      (loan) => loan.remaining_minor,
+      (loan) => loan.currency,
+    ).map(({ currency, total_minor }) => ({ currency, value_minor: total_minor })),
+  });
+  const loanStats: SummaryStat[] = [
+    remainingStat("Total borrowed", loans.filter((loan) => loan.direction === "borrowed")),
+    remainingStat("Total lent", loans.filter((loan) => loan.direction === "lent")),
+    remainingStat("Total remaining", loans),
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -41,6 +59,8 @@ function LoansScreen() {
         <h1 className="font-display text-2xl text-ink">Loans</h1>
         <Button onClick={() => setFormState({ mode: "create" })}>New loan</Button>
       </div>
+
+      {loans.length > 0 ? <SummaryHeader stats={loanStats} /> : null}
 
       {formState ? (
         <Card>
