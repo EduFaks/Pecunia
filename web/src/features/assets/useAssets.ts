@@ -79,6 +79,24 @@ export interface CreateValuationPayload {
   source?: string | null;
 }
 
+/** Comfortably covers a personal workspace's full asset list in one request —
+ * same rationale/limit as `useAccounts`'s bounded read. `AssetsScreen`'s own
+ * list still walks pages via `DataList`; this is for its summary total
+ * (Track P) and any future caller that wants "every asset" flat. */
+const ASSETS_LIST_LIMIT = 200;
+
+/** The flat (non-paginated) asset list — powers `AssetsScreen`'s summary
+ * total. Keyed with a `"flat"` suffix (`[...qk.assets, "flat"]`) — same
+ * collision-avoidance move as `useAccounts` — so it never collides with
+ * `AssetsScreen`'s own `DataList`, which reads the bare `qk.assets` key via
+ * `useInfiniteQuery`. */
+export function useAssets() {
+  return useQuery({
+    queryKey: [...qk.assets, "flat"],
+    queryFn: () => apiFetch<AssetPage>(`/assets?limit=${ASSETS_LIST_LIMIT}`),
+  });
+}
+
 /** A single asset by id, including its live `current_value_minor` —
  * disabled while `id` is undefined, same pattern as `useAccount`. */
 export function useAsset(id: string | undefined) {

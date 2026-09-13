@@ -5,13 +5,16 @@ import EmptyState from "../../components/data/EmptyState";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import Checkbox from "../../components/ui/Checkbox";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import { apiFetch } from "../../lib/api";
 import { MoneyText } from "../../lib/preferences";
 import { qk } from "../../lib/queries";
+import { sumByCurrency } from "../_shared/totals";
 import AccountForm from "./AccountForm";
 import { ACCOUNT_TYPE_LABELS } from "./accountTypes";
-import { useArchiveAccount } from "./useAccounts";
+import { useAccounts, useArchiveAccount } from "./useAccounts";
 import type { AccountOut, AccountPage } from "./useAccounts";
 
 /** One walked page's size for the accounts `DataList` — small enough that
@@ -39,6 +42,27 @@ function AccountsScreen() {
   const [formState, setFormState] = useState<FormState | null>(null);
   const archiveAccount = useArchiveAccount();
 
+  // The summary header's own bounded flat read (Track P) — independent of
+  // `DataList`'s keyset walk below, which only surfaces whatever page(s) the
+  // user has scrolled through. Reuses the same "flat" hook every account
+  // picker already reads, so the total always reflects every account
+  // matching the current `includeArchived` toggle, not just the loaded page.
+  const accountsForTotals = useAccounts(includeArchived).data?.items ?? [];
+  const balanceStats: SummaryStat[] = [
+    {
+      label: "Total balance",
+      entries: sumByCurrency(
+        accountsForTotals,
+        (account) => account.balance_minor,
+        (account) => account.currency,
+      ).map(({ currency, total_minor }) => ({
+        currency,
+        value_minor: total_minor,
+        tone: total_minor < 0 ? "neg" : undefined,
+      })),
+    },
+  ];
+
   function fetchPage(cursor: string | null) {
     const params = new URLSearchParams({
       include_archived: String(includeArchived),
@@ -65,6 +89,8 @@ function AccountsScreen() {
         <h1 className="font-display text-2xl text-ink">Accounts</h1>
         <Button onClick={() => setFormState({ mode: "create" })}>New account</Button>
       </div>
+
+      {accountsForTotals.length > 0 ? <SummaryHeader stats={balanceStats} /> : null}
 
       {formState ? (
         <Card>

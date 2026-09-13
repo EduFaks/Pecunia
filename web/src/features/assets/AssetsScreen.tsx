@@ -4,12 +4,16 @@ import DataList from "../../components/data/DataList";
 import EmptyState from "../../components/data/EmptyState";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import { apiFetch } from "../../lib/api";
 import { MoneyText } from "../../lib/preferences";
 import { qk } from "../../lib/queries";
+import { sumByCurrency } from "../_shared/totals";
 import AssetForm from "./AssetForm";
 import { ASSET_TYPE_LABELS } from "./assetTypes";
+import { useAssets } from "./useAssets";
 import type { AssetOut, AssetPage } from "./useAssets";
 
 /** One walked page's size for the assets `DataList` — same rationale as
@@ -30,6 +34,25 @@ function AssetsScreen() {
   const { showToast } = useToast();
   const [formState, setFormState] = useState<FormState | null>(null);
 
+  // The summary header's own bounded flat read (Track P) — independent of
+  // `DataList`'s keyset walk below, same rationale as `AccountsScreen`'s
+  // `useAccounts` call. Unvalued assets (`current_value_minor: null`) are
+  // skipped rather than counted as zero — a missing valuation isn't "worth
+  // nothing", it's unknown.
+  const assetsForTotals = (useAssets().data?.items ?? []).filter(
+    (asset): asset is AssetOut & { current_value_minor: number } => asset.current_value_minor !== null,
+  );
+  const valueStats: SummaryStat[] = [
+    {
+      label: "Total value",
+      entries: sumByCurrency(
+        assetsForTotals,
+        (asset) => asset.current_value_minor,
+        (asset) => asset.currency,
+      ).map(({ currency, total_minor }) => ({ currency, value_minor: total_minor })),
+    },
+  ];
+
   function fetchPage(cursor: string | null) {
     const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
     if (cursor) {
@@ -44,6 +67,8 @@ function AssetsScreen() {
         <h1 className="font-display text-2xl text-ink">Assets</h1>
         <Button onClick={() => setFormState({ mode: "create" })}>New asset</Button>
       </div>
+
+      {assetsForTotals.length > 0 ? <SummaryHeader stats={valueStats} /> : null}
 
       {formState ? (
         <Card>

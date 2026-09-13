@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
@@ -109,10 +109,43 @@ describe("PortfolioScreen", () => {
     seedPortfolios([BROKERAGE]);
     renderScreen();
 
-    expect(await screen.findByText("Brokerage")).toBeInTheDocument();
-    expect(screen.getByText(/USD · 3 holdings/)).toBeInTheDocument();
+    const row = (await screen.findByText("Brokerage")).closest("li")!;
+    expect(within(row).getByText(/USD · 3 holdings/)).toBeInTheDocument();
     // value_minor 1_250_000 -> $12,500.00
-    expect(screen.getByText(/12,500\.00/)).toBeInTheDocument();
+    expect(within(row).getByText(/12,500\.00/)).toBeInTheDocument();
+  });
+
+  it("shows the grand total across portfolios, keeping each currency separate", async () => {
+    const CRYPTO: PortfolioOut = {
+      id: "pf2",
+      name: "Crypto",
+      currency: "USD",
+      description: null,
+      is_demo: false,
+      created_at: "2026-01-02T00:00:00Z",
+      value_minor: 250_000, // $2,500.00
+      holding_count: 1,
+    };
+    const EURO_FUND: PortfolioOut = {
+      id: "pf3",
+      name: "Euro fund",
+      currency: "EUR",
+      description: null,
+      is_demo: false,
+      created_at: "2026-01-03T00:00:00Z",
+      value_minor: 100_000, // €1,000.00
+      holding_count: 1,
+    };
+    seedPortfolios([BROKERAGE, CRYPTO, EURO_FUND]);
+    renderScreen();
+
+    await screen.findByText("Brokerage");
+
+    const summaryBlock = screen.getByText("Grand total").parentElement!;
+    // 1_250_000 + 250_000 = 1_500_000 minor -> $15,000.00
+    expect(within(summaryBlock).getByText(/15,000\.00/)).toBeInTheDocument();
+    // The EUR portfolio stays its own separate entry.
+    expect(within(summaryBlock).getByText(/1,000\.00/)).toBeInTheDocument();
   });
 
   it("creates a portfolio with the posted fields and shows it in the list", async () => {
