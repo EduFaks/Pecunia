@@ -93,6 +93,13 @@ export const qk = {
   portfolio: (id: string) => ["portfolios", id] as const,
   holdings: (portfolioId: string) => ["portfolios", portfolioId, "holdings"] as const,
 
+  /** The CoinGecko coin-search proxy (Track Q, `GET /portfolios/coins?q=`).
+   * Deliberately its own top-level prefix, NOT nested under `qk.portfolios`
+   * — this is a static, workspace-independent coin catalog, not portfolio
+   * data, so a portfolio/holding mutation's `qk.portfolios` invalidation
+   * must never refetch it. One cache slot per query string. */
+  coins: (q: string) => ["coins", q] as const,
+
   /** Loans (the Loans domain, v1.1). A loan's payments ledger nests under it
    * — `qk.loanPayments(id)` is `["loans", id, "payments"]` — so invalidating
    * the bare `qk.loans` prefix refreshes the loan list, every open loan

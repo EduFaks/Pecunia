@@ -7,13 +7,31 @@ import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import Spinner from "../../components/ui/Spinner";
 import { useToast } from "../../components/ui/Toast";
+import { formatRelativeDate } from "../../lib/format";
 import { MoneyText } from "../../lib/preferences";
 import HoldingForm from "./HoldingForm";
 import PortfolioForm from "./PortfolioForm";
 import PriceUpdateForm from "./PriceUpdateForm";
 import { formatQuantity } from "./quantity";
-import { useDeleteHolding, useDeletePortfolio, useHoldings, usePortfolio } from "./usePortfolios";
+import {
+  useDeleteHolding,
+  useDeletePortfolio,
+  useHoldings,
+  usePortfolio,
+  useRefreshPrices,
+} from "./usePortfolios";
 import type { HoldingOut } from "./usePortfolios";
+
+/** "via CoinGecko · 3d ago" — the latest price's provenance, or `null` when
+ * no price has ever been recorded (`latest_price_as_of` is the signal: a
+ * manual price can carry a null `source` but always has an `as_of`). */
+function priceProvenance(source: string | null, asOf: string | null): string | null {
+  if (!asOf) {
+    return null;
+  }
+  const relative = formatRelativeDate(asOf);
+  return source ? `via ${source} · ${relative}` : relative;
+}
 
 type HoldingFormState = { mode: "create" } | { mode: "edit"; holding: HoldingOut };
 
@@ -40,6 +58,20 @@ function PortfolioDetail() {
   const holdingsQuery = useHoldings(id);
   const deletePortfolio = useDeletePortfolio();
   const deleteHolding = useDeleteHolding(id ?? "");
+  const refreshPrices = useRefreshPrices();
+
+  async function handleRefreshPrices() {
+    try {
+      const result = await refreshPrices.mutateAsync();
+      const parts = [`Updated ${result.updated}, skipped ${result.skipped}.`];
+      if (result.errors.length > 0) {
+        parts.push(`${result.errors.length} error(s): ${result.errors.join("; ")}`);
+      }
+      showToast(parts.join(" "), { variant: result.errors.length > 0 ? "negative" : "positive" });
+    } catch {
+      showToast("Couldn't refresh crypto prices. Please try again.", { variant: "negative" });
+    }
+  }
 
   async function handleDeletePortfolio() {
     if (!id) {
@@ -199,11 +231,21 @@ function PortfolioDetail() {
       ) : null}
 
       <div>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-display text-lg text-ink">Holdings</h2>
-          <Button size="sm" onClick={() => setHoldingForm({ mode: "create" })}>
-            Add holding
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={refreshPrices.isPending}
+              onClick={() => void handleRefreshPrices()}
+            >
+              Update prices
+            </Button>
+            <Button size="sm" onClick={() => setHoldingForm({ mode: "create" })}>
+              Add holding
+            </Button>
+          </div>
         </div>
 
         {holdingsQuery.isLoading ? (
@@ -268,10 +310,23 @@ function PortfolioDetail() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {holding.latest_unit_price_minor !== null ? (
-                        <MoneyText
-                          minor={holding.latest_unit_price_minor}
-                          currency={portfolio.currency}
-                        />
+                        <>
+                          <MoneyText
+                            minor={holding.latest_unit_price_minor}
+                            currency={portfolio.currency}
+                          />
+                          {priceProvenance(
+                            holding.latest_price_source,
+                            holding.latest_price_as_of,
+                          ) ? (
+                            <p className="mt-0.5 text-xs text-ink-faint">
+                              {priceProvenance(
+                                holding.latest_price_source,
+                                holding.latest_price_as_of,
+                              )}
+                            </p>
+                          ) : null}
+                        </>
                       ) : (
                         <span className="font-mono text-sm text-ink-faint">—</span>
                       )}

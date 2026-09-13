@@ -34,6 +34,11 @@ describe("qk", () => {
     expect(qk.loanPayments("l1")).toEqual(["loans", "l1", "payments"]);
   });
 
+  it("keys the coin-search proxy by its query string, as its own top-level prefix", () => {
+    expect(qk.coins("")).toEqual(["coins", ""]);
+    expect(qk.coins("bitcoin")).toEqual(["coins", "bitcoin"]);
+  });
+
   it("scopes transactions by account when given, and stays a shared unscoped prefix otherwise", () => {
     expect(qk.transactions()).toEqual(["transactions"]);
     expect(qk.transactions("acc-1")).toEqual(["transactions", { accountId: "acc-1" }]);

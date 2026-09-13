@@ -48,3 +48,32 @@ export function formatDate(iso: string, options: DateFormatOptions = {}): string
 export function formatNumber(n: number, locale?: string): string {
   return new Intl.NumberFormat(locale).format(n);
 }
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * A short "today"/"3d ago"/"2mo ago"/"2y ago" label for a plain (no-time)
+ * ISO date string — the shape `HoldingPriceOut.as_of` carries. Compared at
+ * UTC day granularity (same rationale as `formatDate`: an ISO date-only
+ * string is an absolute instant, and comparing via local getters would shift
+ * the day depending on the machine's timezone). A same-day or future date
+ * (clock skew, or `as_of` backfilled ahead of `now` by mistake) reads as
+ * "today" rather than a confusing negative count.
+ */
+export function formatRelativeDate(isoDate: string, now: Date = new Date()): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid date: ${isoDate}`);
+  }
+  const nowUtcDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dateUtcDay = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const days = Math.round((nowUtcDay - dateUtcDay) / MS_PER_DAY);
+
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days}d ago`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  const years = Math.round(days / 365);
+  return `${years}y ago`;
+}
