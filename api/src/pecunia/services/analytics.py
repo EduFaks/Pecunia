@@ -13,10 +13,11 @@ from pecunia.models.portfolio import HoldingPrice
 from pecunia.models.scheduled_transaction import ScheduledTransaction
 from pecunia.models.subscription import Subscription
 from pecunia.models.transaction import Transaction
-from pecunia.period import month_end, month_starts
+from pecunia.period import current_window, month_end, month_starts, shift_month
 from pecunia.services.budgets import BudgetService
 from pecunia.services.scoping import scoped_select
 from pecunia.services.snapshots import SnapshotService
+from pecunia.services.subscriptions import monthly_minor
 
 # Deterministic tiebreak for `upcoming`'s merged due list when two items share a
 # due date: planned rules, then subscription renewals, then loan payments.
@@ -26,6 +27,41 @@ _DUE_KIND_ORDER = {"planned": 0, "subscription": 1, "loan": 2}
 # router can constrain the query param to the same set (a future "week" bucket
 # would land here and in `cashflow`).
 GRANULARITIES = ("month",)
+
+# `net_worth_components_as_of`'s four bucket keys, labeled for `summary`'s
+# net-worth-change "top movers" (matches the labels the composition chart's
+# legend already uses, `web/src/features/analytics/NetWorthComposition.tsx`).
+_COMPONENT_LABELS = {
+    "cash_minor": "Cash",
+    "assets_minor": "Assets",
+    "investments_minor": "Investments",
+    "debts_minor": "Debts",
+}
+_ZERO_COMPONENTS = {"cash_minor": 0, "assets_minor": 0, "investments_minor": 0, "debts_minor": 0}
+
+# How many top movers `summary`'s net-worth-change surfaces.
+_TOP_MOVERS = 3
+
+
+def _rate_bps(saved_minor: int, income_minor: int) -> int:
+    """A savings rate in basis points (`saved / income`), or 0 when there was
+    no income to rate against — never a division by zero."""
+    return round(saved_minor / income_minor * 10_000) if income_minor > 0 else 0
+
+
+def _empty_savings() -> dict:
+    return {
+        "income_minor": 0, "spend_minor": 0, "saved_minor": 0, "rate_bps": 0,
+        "prev_saved_minor": 0, "prev_rate_bps": 0,
+    }
+
+
+def _empty_committed_monthly() -> dict:
+    return {"total_minor": 0, "subscriptions_minor": 0, "loans_minor": 0, "planned_minor": 0}
+
+
+def _empty_net_worth_change() -> dict:
+    return {"now_minor": 0, "start_of_month_minor": 0, "delta_minor": 0, "pct_bps": 0, "movers": []}
 
 
 class AnalyticsService:
@@ -505,6 +541,175 @@ class AnalyticsService:
         over_budget.sort(key=lambda b: (-b["over_minor"], str(b["budget_id"])))
 
         return {"due": due, "over_budget": over_budget}
+
+    async def summary(self, workspace_id: uuid.UUID, *, today: date) -> dict[str, dict]:
+        """The dashboard's three KPI tiles, per currency (never summed across
+        currencies, §4): `{currency: {savings, committed_monthly,
+        net_worth_change}}`. Clock-free: `today` is passed in. A pure read —
+        nothing is written, so the caller never needs to commit.
+
+        - **savings**: this calendar month's income/spend so far (reusing
+          `cashflow`) plus the prior month's, for the dashboard's trend arrow.
+        - **committed_monthly**: Σ active subscriptions + Σ loan planned
+          payments + Σ active recurring planned EXPENSES (never income),
+          each normalized to a monthly figure by its own cycle/frequency
+          (`monthly_minor`, the same normalization the subscription rollup
+          uses) — "what leaves before you spend anything."
+        - **net_worth_change**: `net_worth_as_of(today)` vs. the start of the
+          current month, plus the top (up to `_TOP_MOVERS`) non-zero
+          component deltas (cash/assets/investments/debts) by magnitude — a
+          component that didn't move is never listed as a "mover."
+
+        A currency present in one bucket but not another (e.g. committed
+        costs in a currency with no transactions this/last month) still gets
+        an entry, with that bucket's figures all zero.
+        """
+        start_of_month, _ = current_window("monthly", today)
+        prior_month_ref = shift_month(today, -1)
+        prior_month_start, _ = current_window("monthly", prior_month_ref)
+
+        savings = await self._savings(
+            workspace_id, current_start=start_of_month, prior_start=prior_month_start, today=today
+        )
+        committed = await self._committed_monthly(workspace_id)
+        net_worth_change = await self._net_worth_change(
+            workspace_id, today=today, start_of_month=start_of_month
+        )
+
+        currencies = set(savings) | set(committed) | set(net_worth_change)
+        return {
+            currency: {
+                "savings": savings.get(currency, _empty_savings()),
+                "committed_monthly": committed.get(currency, _empty_committed_monthly()),
+                "net_worth_change": net_worth_change.get(currency, _empty_net_worth_change()),
+            }
+            for currency in currencies
+        }
+
+    async def _savings(
+        self, workspace_id: uuid.UUID, *, current_start: date, prior_start: date, today: date
+    ) -> dict[str, dict]:
+        """Per-currency savings for the current month (through `today`) and
+        the prior month (for the trend arrow), from one `cashflow` call
+        spanning both months."""
+        points = await self.cashflow(workspace_id, from_date=prior_start, to_date=today)
+        result: dict[str, dict] = {}
+        for currency, monthly_points in points.items():
+            by_month = {p["period_start"]: p for p in monthly_points}
+            current = by_month.get(current_start, {"income_minor": 0, "spend_minor": 0})
+            prior = by_month.get(prior_start, {"income_minor": 0, "spend_minor": 0})
+            saved = current["income_minor"] - current["spend_minor"]
+            prev_saved = prior["income_minor"] - prior["spend_minor"]
+            result[currency] = {
+                "income_minor": current["income_minor"],
+                "spend_minor": current["spend_minor"],
+                "saved_minor": saved,
+                "rate_bps": _rate_bps(saved, current["income_minor"]),
+                "prev_saved_minor": prev_saved,
+                "prev_rate_bps": _rate_bps(prev_saved, prior["income_minor"]),
+            }
+        return result
+
+    async def _committed_monthly(self, workspace_id: uuid.UUID) -> dict[str, dict]:
+        """Per-currency Σ active subscriptions + Σ loan planned payments + Σ
+        active recurring planned expenses, each normalized to a monthly
+        figure by its own cycle/frequency (`monthly_minor`)."""
+        result: dict[str, dict] = {}
+
+        def bucket(currency: str) -> dict[str, int]:
+            return result.setdefault(
+                currency,
+                {"total_minor": 0, "subscriptions_minor": 0, "loans_minor": 0, "planned_minor": 0},
+            )
+
+        subscriptions = (
+            await self.db.execute(
+                scoped_select(Subscription, workspace_id).where(Subscription.status == "active")
+            )
+        ).scalars().all()
+        for sub in subscriptions:
+            amount = monthly_minor(sub.amount_minor, sub.billing_frequency)
+            b = bucket(sub.currency)
+            b["subscriptions_minor"] += amount
+            b["total_minor"] += amount
+
+        # A loan with no `payment_frequency` set has nothing to normalize
+        # against — skipped, same as the forecast engine's cash projection.
+        loans = (
+            await self.db.execute(
+                scoped_select(Loan, workspace_id).where(
+                    Loan.planned_payment_minor.is_not(None),
+                    Loan.payment_frequency.is_not(None),
+                )
+            )
+        ).scalars().all()
+        for loan in loans:
+            amount = monthly_minor(loan.planned_payment_minor, loan.payment_frequency)
+            b = bucket(loan.currency)
+            b["loans_minor"] += amount
+            b["total_minor"] += amount
+
+        # Only active EXPENSE schedules count as a committed cost — a
+        # recurring income schedule (positive amount_minor) is money coming
+        # in, not a commitment leaving before you spend anything.
+        planned = (
+            await self.db.execute(
+                scoped_select(ScheduledTransaction, workspace_id).where(
+                    ScheduledTransaction.is_active.is_(True),
+                    ScheduledTransaction.amount_minor < 0,
+                )
+            )
+        ).scalars().all()
+        for st in planned:
+            amount = monthly_minor(-st.amount_minor, st.frequency)
+            b = bucket(st.currency)
+            b["planned_minor"] += amount
+            b["total_minor"] += amount
+
+        return result
+
+    async def _net_worth_change(
+        self, workspace_id: uuid.UUID, *, today: date, start_of_month: date
+    ) -> dict[str, dict]:
+        """Per-currency net-worth change from the start of the current month
+        to `today`, plus the top non-zero component movers. Reuses
+        `SnapshotService.net_worth_components_as_of` at both dates — the same
+        reconstruction the composition chart draws — so `now_minor`/
+        `start_of_month_minor` (each the sum of their four parts) can never
+        drift from the movers they're built from."""
+        snapshots = SnapshotService(self.db)
+        now_components = await snapshots.net_worth_components_as_of(workspace_id, today)
+        start_components = await snapshots.net_worth_components_as_of(workspace_id, start_of_month)
+
+        result: dict[str, dict] = {}
+        for currency in set(now_components) | set(start_components):
+            now_parts = now_components.get(currency, _ZERO_COMPONENTS)
+            start_parts = start_components.get(currency, _ZERO_COMPONENTS)
+            now_total = sum(now_parts.values())
+            start_total = sum(start_parts.values())
+            delta = now_total - start_total
+
+            movers = sorted(
+                (
+                    {
+                        "label": label,
+                        "delta_minor": now_parts.get(key, 0) - start_parts.get(key, 0),
+                    }
+                    for key, label in _COMPONENT_LABELS.items()
+                ),
+                key=lambda m: abs(m["delta_minor"]),
+                reverse=True,
+            )
+            movers = [m for m in movers if m["delta_minor"] != 0][:_TOP_MOVERS]
+
+            result[currency] = {
+                "now_minor": now_total,
+                "start_of_month_minor": start_total,
+                "delta_minor": delta,
+                "pct_bps": round(delta / start_total * 10_000) if start_total != 0 else 0,
+                "movers": movers,
+            }
+        return result
 
     @staticmethod
     def _expense_predicates(workspace_id: uuid.UUID, from_date: date, to_date: date) -> tuple:
