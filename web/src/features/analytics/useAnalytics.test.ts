@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyticsPath, selectCurrency } from "./useAnalytics";
+import { analyticsPath, forecastPath, selectCurrency } from "./useAnalytics";
 import type { NetWorthPoint, PerCurrency } from "./useAnalytics";
 
 const RESPONSE: PerCurrency<NetWorthPoint> = {
@@ -46,5 +46,15 @@ describe("analyticsPath", () => {
     expect(analyticsPath("net-worth-composition", { from: "2026-06-12", to: "2026-09-12" }, true)).toBe(
       "/analytics/net-worth-composition?all=true",
     );
+  });
+});
+
+describe("forecastPath", () => {
+  it("builds a bare path when no horizon is given (server-defaulted 6 months)", () => {
+    expect(forecastPath()).toBe("/analytics/forecast");
+  });
+
+  it("appends months for an explicit horizon", () => {
+    expect(forecastPath(3)).toBe("/analytics/forecast?months=3");
   });
 });

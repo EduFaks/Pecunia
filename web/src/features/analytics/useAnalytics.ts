@@ -139,6 +139,26 @@ export interface Upcoming {
   over_budget: OverBudget[];
 }
 
+/** Mirrors `ForecastPoint` (`api/src/pecunia/api/analytics.py`) — one
+ * projected future month, always `projected: true` (the endpoint only ever
+ * returns future points; the caller appends them after real history). */
+export interface ForecastPoint {
+  date: string;
+  value_minor: number;
+  lower_minor: number;
+  upper_minor: number;
+  projected: boolean;
+}
+
+/** Mirrors `ForecastMetrics` — the two series `/analytics/forecast` projects
+ * for one currency. */
+export interface ForecastMetrics {
+  cash: ForecastPoint[];
+  net_worth: ForecastPoint[];
+}
+
+const EMPTY_FORECAST: ForecastMetrics = { cash: [], net_worth: [] };
+
 /** The per-currency envelope every analytics endpoint returns. */
 export type PerCurrency<T> = Record<string, T[]>;
 
@@ -248,5 +268,35 @@ export function useUpcoming() {
   return useQuery({
     queryKey: qk.analytics.upcoming(),
     queryFn: () => apiFetch<Upcoming>("/analytics/upcoming"),
+  });
+}
+
+/** Appends the `months` query param for a non-default forecast horizon; a
+ * bare path (server-defaulted to 6 months) when none is given. Kept here
+ * (pure, exported for its unit tests) alongside `analyticsPath`, the same
+ * URL-building move. */
+export function forecastPath(months?: number): string {
+  return months ? `/analytics/forecast?months=${months}` : "/analytics/forecast";
+}
+
+/**
+ * The forecast engine (Track O, v1.4) — projected cash + net-worth points for
+ * the next `months` months (6 by default), one currency's `{ cash, net_worth }`
+ * pair picked out of the per-currency response (base currency by default,
+ * same `select`-side pick every other analytics hook here makes). A currency
+ * with nothing to project (or while still loading) reads as an empty pair
+ * rather than `undefined`, so callers never need an extra null check before
+ * mapping `.cash`/`.net_worth`.
+ */
+export function useForecast({
+  currency,
+  months,
+}: { currency?: string; months?: number } = {}) {
+  const { base_currency } = usePreferences();
+  const target = currency ?? base_currency;
+  return useQuery({
+    queryKey: qk.analytics.forecast(months),
+    queryFn: () => apiFetch<Record<string, ForecastMetrics>>(forecastPath(months)),
+    select: (data) => data?.[target] ?? EMPTY_FORECAST,
   });
 }

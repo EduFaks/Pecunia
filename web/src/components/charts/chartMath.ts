@@ -104,6 +104,89 @@ export function describeBreakdown(data: DonutDatum[], currency: string, locale?:
   return `Spending by category, ${formatMoney(total, currency, locale)} across ${positive.length} categories: largest is ${largest.label} at ${formatMoney(largest.valueMinor, currency, locale)}.`;
 }
 
+/** One projected month from `/analytics/forecast` — a future point plus its
+ * uncertainty band. Mirrors `ForecastPoint` (`api/src/pecunia/api/analytics.py`),
+ * camelCased and pre-converted from `date`/`*_minor` (see `useForecast`). */
+export interface ForecastChartPoint {
+  date: string;
+  valueMinor: number;
+  lowerMinor: number;
+  upperMinor: number;
+}
+
+/** One row of the merged history+forecast series `ForecastArea` feeds
+ * Recharts. `historyValue` is set on real (solid) history rows;
+ * `projectedValue`/`lower`/`bandWidth` are set on the dashed-tail rows. Only
+ * `date` is guaranteed — every other field is present only where it applies,
+ * so a `<Line>`/`<Area>` reading the "wrong" key for a row simply skips it
+ * (Recharts treats a missing value as a gap, not a zero). */
+export interface MergedForecastPoint {
+  date: string;
+  historyValue?: number;
+  projectedValue?: number;
+  lower?: number;
+  bandWidth?: number;
+}
+
+/**
+ * Merges a real (solid) history series with a projected (dashed) tail into
+ * the one row-per-date array `ForecastArea` charts: `historyValue` for
+ * history rows, `projectedValue`/`lower`/`bandWidth` for projected rows.
+ * `bandWidth` (not `upperMinor` directly) is what a stacked `<Area>` draws —
+ * an invisible `lower` area stacked under a visible `bandWidth` area lands
+ * the visible band's top at `lower + bandWidth == upperMinor`, the standard
+ * Recharts range-band technique.
+ *
+ * When both a history and a projected series are given, the LAST history
+ * point is duplicated onto `projectedValue` too (a "bridge" row) — a
+ * `<Line>` only draws between two rows that both define its `dataKey`, so
+ * without the bridge the dashed line would start one point late, leaving a
+ * visible gap where it should instead pick up exactly at the solid line's
+ * end.
+ */
+export function mergeForecastSeries(
+  history: ChartPoint[],
+  projected: ForecastChartPoint[],
+): MergedForecastPoint[] {
+  const historyRows: MergedForecastPoint[] = history.map((point) => ({
+    date: point.date,
+    historyValue: point.valueMinor,
+  }));
+  const projectedRows: MergedForecastPoint[] = projected.map((point) => ({
+    date: point.date,
+    projectedValue: point.valueMinor,
+    lower: point.lowerMinor,
+    bandWidth: point.upperMinor - point.lowerMinor,
+  }));
+
+  if (historyRows.length === 0 || projectedRows.length === 0) {
+    return [...historyRows, ...projectedRows];
+  }
+
+  const lastHistoryIndex = historyRows.length - 1;
+  const bridged = historyRows.slice(0, lastHistoryIndex).concat({
+    ...historyRows[lastHistoryIndex],
+    projectedValue: historyRows[lastHistoryIndex].historyValue,
+  });
+  return [...bridged, ...projectedRows];
+}
+
+/** One-sentence `aria-label` for a forecast chart's dashed tail — the metric
+ * name and the final projected figure. `label` names the metric ("Cash
+ * forecast", "Net worth"). */
+export function describeForecast(
+  label: string,
+  projected: ForecastChartPoint[],
+  currency: string,
+  locale?: string,
+): string {
+  if (projected.length === 0) {
+    return `${label}: no forecast available.`;
+  }
+  const last = projected[projected.length - 1];
+  return `${label}: projected to ${formatMoney(last.valueMinor, currency, locale)} by ${formatDate(last.date, { locale })}.`;
+}
+
 /**
  * A one-sentence trend summary for a chart's `aria-label` — "Checking:
  * trending up, from $1,234.00 on Jan 1, 2026 to $2,000.00 on Jan 3, 2026."
