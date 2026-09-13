@@ -56,6 +56,12 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     # avatar is deliberately excluded — bulky base64 image data, non-sensitive
     # but no business in an audit payload (plan / CONVENTIONS §7).
     "contact": frozenset({"id", "name", "default_category_id", "type", "is_demo"}),
+    "goal": frozenset(
+        {
+            "id", "name", "target_minor", "currency", "target_date",
+            "source_kind", "source_id", "manual_current_minor",
+        }
+    ),
     "net_worth_snapshot": frozenset(
         {"id", "captured_on", "currency", "net_worth_minor", "is_demo"}
     ),

@@ -65,6 +65,10 @@ class Actions:
     CONTACT_CREATED = "contact.created"
     CONTACT_UPDATED = "contact.updated"
     CONTACT_ARCHIVED = "contact.archived"
+    # goals (savings goals, v1.4 — progress is derived from a source, not a ledger)
+    GOAL_CREATED = "goal.created"
+    GOAL_UPDATED = "goal.updated"
+    GOAL_DELETED = "goal.deleted"
     # subscriptions (recurring-service registry — a tracker, not an auto-poster)
     SUBSCRIPTION_CREATED = "subscription.created"
     SUBSCRIPTION_UPDATED = "subscription.updated"
