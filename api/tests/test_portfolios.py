@@ -532,3 +532,68 @@ async def test_refresh_prices_endpoint_uses_the_injected_provider(
     ).json()
     assert got["latest_unit_price_minor"] == 6_500_000
     assert got["latest_price_source"] == "coingecko"
+
+
+# --------------------------------------------------------------------------- #
+# Coin-search proxy — GET /portfolios/coins?q= (Task 4, Track Q)
+# --------------------------------------------------------------------------- #
+
+_COINS = [
+    {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+    {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+    {"id": "bitcoin-cash", "symbol": "bch", "name": "Bitcoin Cash"},
+]
+
+
+async def test_coins_requires_auth(client, initialized_instance):
+    resp = await client.get("/api/v1/portfolios/coins")
+    assert resp.status_code == 401
+
+
+async def test_coins_endpoint_filters_by_q(client, app, initialized_instance):
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    fake = FakePriceProvider(coins=_COINS)
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.get("/api/v1/portfolios/coins", params={"q": "bitcoin"}, headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [c["id"] for c in body] == ["bitcoin", "bitcoin-cash"]
+    assert body[0] == {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}
+
+    resp_eth = await client.get("/api/v1/portfolios/coins", params={"q": "eth"}, headers=h)
+    assert [c["id"] for c in resp_eth.json()] == ["ethereum"]
+
+
+async def test_coins_endpoint_caps_results(client, app, initialized_instance):
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    many = [{"id": str(i), "symbol": "co", "name": "Coin"} for i in range(30)]
+    fake = FakePriceProvider(coins=many)
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.get("/api/v1/portfolios/coins", headers=h)
+    assert len(resp.json()) == 20
+
+
+def test_get_price_provider_caches_one_instance_on_app_state():
+    """The DI half of Task 4's "cache populated on first call": the
+    dependency itself must hand back the SAME provider across calls (via
+    `app.state`), so `CoinGeckoPriceProvider.coins()`'s own memoization
+    (tested directly in test_price_provider.py) actually spans requests
+    instead of being rebuilt — and re-fetched — every time."""
+    from types import SimpleNamespace
+
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import CoinGeckoPriceProvider
+
+    fake_request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    first = get_price_provider(fake_request)
+    second = get_price_provider(fake_request)
+    assert first is second
+    assert isinstance(first, CoinGeckoPriceProvider)

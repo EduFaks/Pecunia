@@ -12,6 +12,7 @@ from pecunia.services.prices.provider import (
     CoinGeckoPriceProvider,
     FakePriceProvider,
     PriceProviderError,
+    filter_coins,
 )
 
 
@@ -94,6 +95,85 @@ async def test_unparsable_response_raises_price_provider_error():
 
 
 # --------------------------------------------------------------------------- #
+# CoinGeckoPriceProvider.coins() — Task 4, cached coin-list proxy
+# --------------------------------------------------------------------------- #
+
+
+async def test_coins_parses_the_list_body():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v3/coins/list"
+        return httpx.Response(
+            200,
+            json=[
+                {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+                {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+            ],
+        )
+
+    provider = CoinGeckoPriceProvider(client=_mock_client(handler))
+    coins = await provider.coins()
+    assert coins == [
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+        {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+    ]
+
+
+async def test_coins_is_memoized_a_second_call_does_not_refetch():
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json=[{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}])
+
+    provider = CoinGeckoPriceProvider(client=_mock_client(handler))
+    first = await provider.coins()
+    second = await provider.coins()
+    assert first == second
+    assert call_count == 1
+
+
+async def test_coins_http_error_raises_price_provider_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    provider = CoinGeckoPriceProvider(client=_mock_client(handler))
+    with pytest.raises(PriceProviderError):
+        await provider.coins()
+
+
+# --------------------------------------------------------------------------- #
+# filter_coins() — the coin-search proxy's q/cap logic
+# --------------------------------------------------------------------------- #
+
+_COINS = [
+    {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+    {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+    {"id": "bitcoin-cash", "symbol": "bch", "name": "Bitcoin Cash"},
+]
+
+
+def test_filter_coins_matches_case_insensitively_on_symbol_or_name():
+    assert filter_coins(_COINS, "BTC") == [_COINS[0]]  # symbol match, case-insensitive
+    assert filter_coins(_COINS, "bitcoin") == [_COINS[0], _COINS[2]]  # name substring
+    assert filter_coins(_COINS, "ether") == [_COINS[1]]
+    assert filter_coins(_COINS, "cash") == [_COINS[2]]
+
+
+def test_filter_coins_blank_query_returns_the_first_page_unfiltered():
+    assert filter_coins(_COINS, None) == _COINS
+    assert filter_coins(_COINS, "") == _COINS
+    assert filter_coins(_COINS, "  ") == _COINS
+
+
+def test_filter_coins_caps_results():
+    many = [{"id": str(i), "symbol": "co", "name": "Coin"} for i in range(50)]
+    assert len(filter_coins(many, "co")) == 20
+    assert len(filter_coins(many, "co", limit=5)) == 5
+    assert len(filter_coins(many, None)) == 20
+
+
+# --------------------------------------------------------------------------- #
 # FakePriceProvider
 # --------------------------------------------------------------------------- #
 
@@ -110,3 +190,10 @@ async def test_fake_price_provider_raises_on_demand():
     fake = FakePriceProvider(raise_for_currencies={"EUR"})
     with pytest.raises(PriceProviderError):
         await fake.prices(["bitcoin"], "EUR")
+
+
+async def test_fake_price_provider_coins_returns_canned_list_and_counts_calls():
+    fake = FakePriceProvider(coins=_COINS)
+    assert await fake.coins() == _COINS
+    assert await fake.coins() == _COINS
+    assert fake.coins_calls == 2

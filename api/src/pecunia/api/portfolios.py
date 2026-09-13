@@ -13,7 +13,11 @@ from pecunia.models.portfolio import Holding, HoldingPrice, Portfolio
 from pecunia.money import CurrencyStr, MinorInt
 from pecunia.pagination import DEFAULT_LIMIT
 from pecunia.services.portfolios import UNSET, PortfolioService
-from pecunia.services.prices.provider import CoinGeckoPriceProvider, CryptoPriceProvider
+from pecunia.services.prices.provider import (
+    CoinGeckoPriceProvider,
+    CryptoPriceProvider,
+    filter_coins,
+)
 from pecunia.services.prices.refresh import PriceRefreshService
 
 router = APIRouter(
@@ -250,12 +254,18 @@ class RefreshPricesOut(BaseModel):
     errors: list[str]
 
 
+class CoinOut(BaseModel):
+    id: str
+    symbol: str
+    name: str
+
+
 # ---- Crypto price sync (Track Q) ------------------------------------------ #
 #
 # Registered before the `/{portfolio_id}` routes below — Starlette matches
 # routes by path *structure*, not parameter type, so a literal one-segment
 # path like this one must be declared ahead of `/{portfolio_id}` or it would
-# be swallowed by it (portfolio_id="refresh-prices" would fail UUID
+# be swallowed by it (portfolio_id="refresh-prices"/"coins" would fail UUID
 # validation with a 422 instead of ever reaching this handler).
 
 
@@ -270,6 +280,19 @@ async def refresh_prices(
     )
     await db.commit()
     return RefreshPricesOut(**result)
+
+
+@router.get("/coins")
+async def search_coins(
+    provider: Annotated[CryptoPriceProvider, Depends(get_price_provider)],
+    # require_workspace (not just require_initialized) gates this behind auth
+    # like every other portfolios route, even though it reads nothing
+    # workspace-scoped — the picker is only ever shown to a logged-in user.
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+    q: str | None = None,
+) -> list[CoinOut]:
+    coins = await provider.coins()
+    return [CoinOut(**coin) for coin in filter_coins(coins, q)]
 
 
 @router.get("/{portfolio_id}")
