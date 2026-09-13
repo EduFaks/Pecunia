@@ -114,6 +114,9 @@ export function useCreateAsset() {
       apiFetch<AssetOut>("/assets", { method: "POST", json: payload }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.assets });
+      // An asset value change can move a net-worth-sourced goal's progress
+      // (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }
@@ -125,6 +128,9 @@ export function useUpdateAsset(id: string) {
       apiFetch<AssetOut>(`/assets/${id}`, { method: "PATCH", json: payload }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.assets });
+      // An asset value change can move a net-worth-sourced goal's progress
+      // (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }
@@ -138,6 +144,9 @@ export function useDeleteAsset() {
     mutationFn: (id: string) => apiFetch<void>(`/assets/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.assets });
+      // An asset value change can move a net-worth-sourced goal's progress
+      // (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }
@@ -155,6 +164,9 @@ export function useAddValuation(assetId: string) {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.assets });
+      // An asset value change can move a net-worth-sourced goal's progress
+      // (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }

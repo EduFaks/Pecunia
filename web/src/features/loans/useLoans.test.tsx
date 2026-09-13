@@ -68,6 +68,9 @@ function expectNetWorthInvalidations(invalidateSpy: MockInstance<QueryClient["in
   expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["loans"] });
   expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
   expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["accounts"] });
+  // A loan/payment change can move a net-worth-sourced goal's progress, so
+  // goals re-read too (L3).
+  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
 }
 
 describe("useLoans", () => {

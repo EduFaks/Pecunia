@@ -24,7 +24,10 @@
  * NOT touch `qk.accounts`: a portfolio change never moves an account balance,
  * and the dashboard's net-worth tile reads portfolios through this very
  * `qk.portfolios` prefix (so the tile still updates), keeping the invalidation
- * to exactly the keys a portfolio change affects.
+ * to exactly the keys a portfolio change affects. It also invalidates
+ * `qk.goals`: a portfolio- or net-worth-sourced goal's server-computed
+ * `progress`/`eta` (`features/goals/useGoals.ts`) can move with any
+ * portfolio/holding/price change, including a CoinGecko price refresh.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -197,6 +200,7 @@ export function useHoldings(portfolioId: string | undefined) {
 function invalidatePortfolios(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: qk.portfolios });
   void queryClient.invalidateQueries({ queryKey: ["analytics"] });
+  void queryClient.invalidateQueries({ queryKey: qk.goals });
 }
 
 export function useCreatePortfolio() {

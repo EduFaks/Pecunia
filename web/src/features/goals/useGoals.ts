@@ -10,10 +10,16 @@
  * A goal's `progress`/`eta` are computed server-side on every read (derived
  * from its source — an account balance, a portfolio value, net worth, or a
  * manual figure — never stored), so `GoalOut` already carries the figures
- * `GoalRing` needs; there is no separate progress/eta hook, and no OTHER
- * mutation anywhere needs to invalidate `qk.goals` — a goal's numbers move
- * because its underlying source moved, and the next read simply recomputes
- * them fresh (nothing cached to go stale).
+ * `GoalRing` needs; there is no separate progress/eta hook. They ARE cached
+ * (under `qk.goals`, by this file's own queries) and so CAN go stale: a
+ * goal's numbers move whenever its underlying source moves, which happens
+ * through mutations that live in other files entirely (a transaction, an
+ * account edit, a portfolio/holding/price change, an asset valuation, a
+ * loan payment). Each of those invalidates `qk.goals` alongside its own
+ * `["analytics"]` invalidation (see e.g. `features/transactions/
+ * useTransactions.ts`'s `invalidateAfterTransactionChange`) so a mounted
+ * `GoalRing`/`GoalsScreen` re-reads fresh progress/eta rather than showing a
+ * stale figure.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

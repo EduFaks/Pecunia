@@ -145,6 +145,9 @@ describe("useCreateTransaction", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
     // A transaction moves cashflow/spending/net-worth, so analytics re-reads too.
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
+    // A transaction can move a net-worth-sourced (or account-sourced) goal's
+    // progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -167,6 +170,9 @@ describe("useUpdateTransaction", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
     // A transaction moves cashflow/spending/net-worth, so analytics re-reads too.
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
+    // A transaction can move a net-worth-sourced (or account-sourced) goal's
+    // progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -186,6 +192,9 @@ describe("useDeleteTransaction", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
     // A transaction moves cashflow/spending/net-worth, so analytics re-reads too.
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
+    // A transaction can move a net-worth-sourced (or account-sourced) goal's
+    // progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -205,6 +214,9 @@ describe("useRestoreTransaction", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
     // A transaction moves cashflow/spending/net-worth, so analytics re-reads too.
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
+    // A transaction can move a net-worth-sourced (or account-sourced) goal's
+    // progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 

@@ -20,6 +20,10 @@
  *     worth, so every analytics window (`qk.analytics.*` all nest under
  *     this shared prefix) must re-read. This mirrors how Planned's
  *     post/skip refresh the finance surfaces (`features/planned/usePlanned.ts`).
+ *   - `qk.goals` (`["goals"]`) — a transaction can move an account- or
+ *     net-worth-sourced goal's server-computed `progress`/`eta`
+ *     (`features/goals/useGoals.ts`), so a mounted goal ring/list must
+ *     re-read too.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -220,6 +224,7 @@ function invalidateAfterTransactionChange(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: qk.transactions() });
   void queryClient.invalidateQueries({ queryKey: qk.accounts });
   void queryClient.invalidateQueries({ queryKey: ["analytics"] });
+  void queryClient.invalidateQueries({ queryKey: qk.goals });
 }
 
 export function useCreateTransaction() {

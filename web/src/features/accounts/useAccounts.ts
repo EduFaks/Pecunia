@@ -108,6 +108,9 @@ export function useCreateAccount() {
       apiFetch<AccountOut>("/accounts", { method: "POST", json: payload }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      // An account change (balance, currency) can move an account- or
+      // net-worth-sourced goal's progress (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }
@@ -119,6 +122,9 @@ export function useUpdateAccount(id: string) {
       apiFetch<AccountOut>(`/accounts/${id}`, { method: "PATCH", json: payload }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      // An account change (balance, currency) can move an account- or
+      // net-worth-sourced goal's progress (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }
@@ -133,6 +139,9 @@ export function useArchiveAccount() {
     mutationFn: (id: string) => apiFetch<void>(`/accounts/${id}/archive`, { method: "POST" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      // An account change (balance, currency) can move an account- or
+      // net-worth-sourced goal's progress (`features/goals/useGoals.ts`).
+      void queryClient.invalidateQueries({ queryKey: qk.goals });
     },
   });
 }

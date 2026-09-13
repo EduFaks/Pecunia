@@ -24,7 +24,9 @@
  * touch `qk.accounts`: a loan change never moves an account balance, and the
  * dashboard's net-worth tile reads loans through this very `qk.loans` prefix
  * (so the tile still updates), keeping the invalidation to exactly the keys a
- * loan change affects.
+ * loan change affects. It also invalidates `qk.goals`: a net-worth-sourced
+ * goal's server-computed `progress`/`eta` (`features/goals/useGoals.ts`) can
+ * move with any loan/payment change.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -192,6 +194,7 @@ export function useLoanPayments(loanId: string | undefined) {
 function invalidateLoans(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: qk.loans });
   void queryClient.invalidateQueries({ queryKey: ["analytics"] });
+  void queryClient.invalidateQueries({ queryKey: qk.goals });
 }
 
 /** The invalidation for payment mutations that can attach/detach a funding

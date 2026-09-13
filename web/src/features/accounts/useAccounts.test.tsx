@@ -112,6 +112,9 @@ describe("useCreateAccount", () => {
       json: { name: "Checking", type: "checking", currency: "USD", initial_balance_minor: 500 },
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
+    // An account change (balance, currency) can move an account- or
+    // net-worth-sourced goal's progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -131,6 +134,9 @@ describe("useUpdateAccount", () => {
       json: { name: "Renamed" },
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
+    // An account change (balance, currency) can move an account- or
+    // net-worth-sourced goal's progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -147,5 +153,8 @@ describe("useArchiveAccount", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockApiFetch).toHaveBeenCalledWith("/accounts/a1/archive", { method: "POST" });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["accounts"] });
+    // An account change (balance, currency) can move an account- or
+    // net-worth-sourced goal's progress, so goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });

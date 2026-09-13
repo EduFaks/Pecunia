@@ -78,6 +78,9 @@ describe("useCreateAsset", () => {
       json: { name: "1967 Mustang", type: "vehicle", currency: "USD" },
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["assets"] });
+    // An asset value change can move a net-worth-sourced goal's progress, so
+    // goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -97,6 +100,9 @@ describe("useUpdateAsset", () => {
       json: { name: "Renamed" },
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["assets"] });
+    // An asset value change can move a net-worth-sourced goal's progress, so
+    // goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -113,6 +119,9 @@ describe("useDeleteAsset", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockApiFetch).toHaveBeenCalledWith("/assets/as1", { method: "DELETE" });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["assets"] });
+    // An asset value change can move a net-worth-sourced goal's progress, so
+    // goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });
 
@@ -141,5 +150,8 @@ describe("useAddValuation", () => {
       json: { value_minor: 4_600_000, as_of: "2026-06-01", source: "Appraisal" },
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["assets"] });
+    // An asset value change can move a net-worth-sourced goal's progress, so
+    // goals re-read too (L3).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
   });
 });

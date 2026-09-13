@@ -67,6 +67,9 @@ function expectNetWorthInvalidations(invalidateSpy: MockInstance<QueryClient["in
   expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["portfolios"] });
   expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
   expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["accounts"] });
+  // A portfolio/holding/price change can move a portfolio- or net-worth-
+  // sourced goal's progress, so goals re-read too (L3).
+  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["goals"] });
 }
 
 describe("usePortfolios", () => {
