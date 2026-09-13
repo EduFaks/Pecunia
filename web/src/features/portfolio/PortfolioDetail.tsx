@@ -295,72 +295,72 @@ function PortfolioDetail() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {holdings.map((holding) => (
-                  <tr key={holding.id}>
-                    <td className="px-4 py-3">
-                      <p className="text-ink">{holding.name}</p>
-                      {holding.symbol ? (
-                        <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
-                          {holding.symbol}
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-figures text-ink-2">
-                      {formatQuantity(holding.quantity)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {holding.latest_unit_price_minor !== null ? (
-                        <>
-                          <MoneyText
-                            minor={holding.latest_unit_price_minor}
-                            currency={portfolio.currency}
-                          />
-                          {priceProvenance(
-                            holding.latest_price_source,
-                            holding.latest_price_as_of,
-                          ) ? (
-                            <p className="mt-0.5 text-xs text-ink-faint">
-                              {priceProvenance(
-                                holding.latest_price_source,
-                                holding.latest_price_as_of,
-                              )}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <span className="font-mono text-sm text-ink-faint">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <MoneyText minor={holding.value_minor} currency={portfolio.currency} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setPricingHolding(holding)}
-                        >
-                          Record price
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setHoldingForm({ mode: "edit", holding })}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeletingHolding(holding)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {holdings.map((holding) => {
+                  // Hoisted so a row with provenance to show doesn't compute
+                  // it twice (once to check truthiness, once to render it).
+                  const provenance = priceProvenance(
+                    holding.latest_price_source,
+                    holding.latest_price_as_of,
+                  );
+                  return (
+                    <tr key={holding.id}>
+                      <td className="px-4 py-3">
+                        <p className="text-ink">{holding.name}</p>
+                        {holding.symbol ? (
+                          <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
+                            {holding.symbol}
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-figures text-ink-2">
+                        {formatQuantity(holding.quantity)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {holding.latest_unit_price_minor !== null ? (
+                          <>
+                            <MoneyText
+                              minor={holding.latest_unit_price_minor}
+                              currency={portfolio.currency}
+                            />
+                            {provenance ? (
+                              <p className="mt-0.5 text-xs text-ink-faint">{provenance}</p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="font-mono text-sm text-ink-faint">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <MoneyText minor={holding.value_minor} currency={portfolio.currency} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setPricingHolding(holding)}
+                          >
+                            Record price
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setHoldingForm({ mode: "edit", holding })}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeletingHolding(holding)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
