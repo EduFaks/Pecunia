@@ -571,7 +571,7 @@ class AnalyticsService:
         savings = await self._savings(
             workspace_id, current_start=start_of_month, prior_start=prior_month_start, today=today
         )
-        committed = await self._committed_monthly(workspace_id)
+        committed = await self.committed_monthly(workspace_id)
         net_worth_change = await self._net_worth_change(
             workspace_id, today=today, start_of_month=start_of_month
         )
@@ -610,10 +610,15 @@ class AnalyticsService:
             }
         return result
 
-    async def _committed_monthly(self, workspace_id: uuid.UUID) -> dict[str, dict]:
+    async def committed_monthly(self, workspace_id: uuid.UUID) -> dict[str, dict]:
         """Per-currency Σ active subscriptions + Σ loan planned payments + Σ
         active recurring planned expenses, each normalized to a monthly
-        figure by its own cycle/frequency (`monthly_minor`)."""
+        figure by its own cycle/frequency (`monthly_minor`). Public (not
+        `summary`-private) because `ForecastService` also reuses this same
+        total to split the cash forecast's uncertainty band into its
+        non-recurring portion (M2) — the committed portion is already
+        reflected in the forecast's dashed center line, so it must not also
+        widen the band around it."""
         result: dict[str, dict] = {}
 
         def bucket(currency: str) -> dict[str, int]:
@@ -634,10 +639,15 @@ class AnalyticsService:
             b["total_minor"] += amount
 
         # A loan with no `payment_frequency` set has nothing to normalize
-        # against — skipped, same as the forecast engine's cash projection.
+        # against, and one with no `next_due` isn't actually scheduled yet —
+        # both skipped, same criteria the forecast engine's cash projection
+        # applies (`ForecastService.forecast`'s own loans query) so the
+        # dashboard's "committed monthly" tile and the cash forecast always
+        # agree on which loans count as committed.
         loans = (
             await self.db.execute(
                 scoped_select(Loan, workspace_id).where(
+                    Loan.next_due.is_not(None),
                     Loan.planned_payment_minor.is_not(None),
                     Loan.payment_frequency.is_not(None),
                 )

@@ -1012,6 +1012,29 @@ async def test_summary_committed_monthly_normalizes_every_cycle(db, initialized_
     }
 
 
+async def test_summary_committed_monthly_loan_needs_next_due_too(db, initialized_instance):
+    """L2 (filter parity): a loan with a `payment_frequency` and
+    `planned_payment_minor` but no `next_due` isn't actually scheduled
+    yet — it must be excluded from committed-monthly, same as the cash
+    forecast's own loan-occurrence query (`ForecastService.forecast`),
+    which already skips it (via `expand_occurrences` returning nothing for
+    a null anchor date)."""
+    ws_id = await _ws_id(db, initialized_instance)
+    # An anchor item so "USD" appears in the result even though the loan
+    # below is excluded.
+    await _subscription(db, ws_id, name="Anchor", amount=1_000, next_renewal=date(2026, 10, 1))
+    await _due_loan(
+        db, ws_id, name="Someday", planned_payment=6_000, next_due=None,
+        payment_frequency="monthly",
+    )
+
+    result = await AnalyticsService(db).summary(ws_id, today=TODAY)
+
+    assert result["USD"]["committed_monthly"] == {
+        "total_minor": 1_000, "subscriptions_minor": 1_000, "loans_minor": 0, "planned_minor": 0,
+    }
+
+
 async def test_summary_net_worth_change_delta_pct_and_top_movers(db, initialized_instance):
     ws_id = await _ws_id(db, initialized_instance)
     acc = await _account(db, ws_id, currency="USD", initial=100_000)

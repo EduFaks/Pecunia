@@ -179,6 +179,32 @@ async def test_forecast_band_widens_with_distance(db, initialized_instance):
         assert p["upper_minor"] == p["value_minor"] + half
 
 
+async def test_forecast_band_subtracts_committed_monthly_spend(db, initialized_instance):
+    """M2: the band widens by NON-recurring spend only — the recurring/
+    committed portion (subscriptions/loans/recurring planned expenses,
+    monthly-normalized) is already reflected in the forecast's dashed center
+    line, so including it again in the band would double-count it."""
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD", initial=0)
+    # 3 months of USD 9_000 expense history in the 6-month lookback window
+    # (today = 2026-09-13) -> avg total monthly spend = 27_000/6 = 4_500.
+    await _tx(db, ws_id, acc, amount=-9_000, on=date(2026, 6, 5))
+    await _tx(db, ws_id, acc, amount=-9_000, on=date(2026, 7, 5))
+    await _tx(db, ws_id, acc, amount=-9_000, on=date(2026, 8, 5))
+    # A committed monthly subscription: 1_500/mo -> committed monthly total
+    # 1_500. Non-recurring average = 4_500 - 1_500 = 3_000.
+    await _subscription(
+        db, ws_id, name="Rent-like", amount=1_500, next_renewal=date(2026, 10, 1),
+    )
+
+    result = await ForecastService(db).forecast(ws_id, today=TODAY, months=3)
+
+    cash = result["USD"]["cash"]
+    widths = [p["upper_minor"] - p["lower_minor"] for p in cash]
+    # Width = 2 * non_recurring_avg * month_index (non_recurring_avg=3_000).
+    assert widths == [6_000, 12_000, 18_000]
+
+
 async def test_forecast_no_history_has_zero_band(db, initialized_instance):
     ws_id = await _ws_id(db, initialized_instance)
     await _account(db, ws_id, currency="USD", initial=1_000)

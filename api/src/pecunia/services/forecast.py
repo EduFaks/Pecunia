@@ -35,13 +35,18 @@ class ForecastService:
     swap. Net worth only moves with projected income/expense (scheduled
     transactions + subscriptions).
 
-    **Uncertainty band:** the average monthly *total* expense over the last
-    `_BAND_LOOKBACK_MONTHS` months of real history (reusing
-    `AnalyticsService.cashflow`, the same figure the dashboard's cashflow
-    chart draws) widens `lower_minor`/`upper_minor` around the committed
-    (dashed) center line by ± that average, multiplied by how many months out
-    a point sits — the farther out, the wider the band. This is an honest,
-    explainable estimate, not a statistical model.
+    **Uncertainty band:** the average monthly NON-recurring expense over the
+    last `_BAND_LOOKBACK_MONTHS` months of real history (the average monthly
+    *total* expense, reusing `AnalyticsService.cashflow` — the same figure
+    the dashboard's cashflow chart draws — minus the workspace's current
+    committed monthly expense, `AnalyticsService.committed_monthly`) widens
+    `lower_minor`/`upper_minor` around the committed (dashed) center line by
+    ± that average, multiplied by how many months out a point sits — the
+    farther out, the wider the band. The committed portion is excluded
+    because it's already baked into the center line itself (via
+    `expand_occurrences` below); only the leftover, unpredictable spend
+    should size the uncertainty around it. This is an honest, explainable
+    estimate, not a statistical model.
     """
 
     def __init__(self, db: AsyncSession):
@@ -107,12 +112,20 @@ class ForecastService:
                 add(net_worth_deltas, sub.currency, idx, -sub.amount_minor)
 
         # Loan planned payments: cash out only — net-worth-neutral (see the
-        # class docstring's asymmetry note).
+        # class docstring's asymmetry note). Same three-column criterion
+        # `AnalyticsService.committed_monthly` filters on (next_due,
+        # planned_payment_minor, payment_frequency all required) — kept in
+        # sync (L2, filter parity) so the dashboard's "committed monthly"
+        # tile and this projection always agree on which loans count as
+        # committed. A null `payment_frequency` would already yield no
+        # occurrences below (`expand_occurrences` returns `[]` for it), so
+        # this filter is explicit rather than load-bearing.
         loans = (
             await self.db.execute(
                 scoped_select(Loan, workspace_id).where(
                     Loan.next_due.is_not(None),
                     Loan.planned_payment_minor.is_not(None),
+                    Loan.payment_frequency.is_not(None),
                 )
             )
         ).scalars().all()
@@ -154,18 +167,32 @@ class ForecastService:
         return totals
 
     async def _recent_avg_monthly_expense(self, workspace_id: uuid.UUID, today: date) -> dict[str, int]:
-        """Average monthly total spend over the last `_BAND_LOOKBACK_MONTHS`
-        months (reusing `AnalyticsService.cashflow`'s per-currency, zero-
-        filled month axis), the uncertainty band's per-month width. A
-        currency with no recent activity has no band (0 — the point sits
-        exactly on the committed line)."""
+        """Average monthly NON-recurring spend over the last
+        `_BAND_LOOKBACK_MONTHS` months — the uncertainty band's per-month
+        width. Computed as the average monthly *total* spend (reusing
+        `AnalyticsService.cashflow`'s per-currency, zero-filled month axis)
+        MINUS the workspace's current committed monthly expense
+        (`AnalyticsService.committed_monthly` — subscriptions + loan planned
+        payments + recurring planned expenses, each already normalized to a
+        monthly figure), floored at 0. The committed portion is subtracted
+        because it's already reflected in the forecast's dashed center line
+        (via this class's own `expand_occurrences` projections above) —
+        widening the band by it again would double-count it. A currency with
+        no recent activity, or where committed spend meets or exceeds total
+        spend, has no band (0 — the point sits exactly on the committed
+        line)."""
         from_date = shift_month(today, -(_BAND_LOOKBACK_MONTHS - 1))
-        cashflow = await AnalyticsService(self.db).cashflow(workspace_id, from_date=from_date, to_date=today)
-        return {
-            currency: round(sum(point["spend_minor"] for point in points) / len(points))
-            for currency, points in cashflow.items()
-            if points
-        }
+        analytics = AnalyticsService(self.db)
+        cashflow = await analytics.cashflow(workspace_id, from_date=from_date, to_date=today)
+        committed = await analytics.committed_monthly(workspace_id)
+        result: dict[str, int] = {}
+        for currency, points in cashflow.items():
+            if not points:
+                continue
+            avg_total = round(sum(point["spend_minor"] for point in points) / len(points))
+            committed_total = committed.get(currency, {}).get("total_minor", 0)
+            result[currency] = max(0, avg_total - committed_total)
+        return result
 
 
 def _walk(point_dates: list[date], start: int, deltas: list[int], band_avg: int) -> list[dict]:
