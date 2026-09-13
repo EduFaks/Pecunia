@@ -68,6 +68,30 @@ async def _tx(client, h, account_id, *, amount_minor=-45_000, occurred_on="2026-
     ).json()
 
 
+async def _contact(client, h, **overrides):
+    body = {"name": "Bank"}
+    body.update(overrides)
+    return (await client.post("/api/v1/contacts", json=body, headers=h)).json()
+
+
+async def _other_workspace_headers(client, user_factory, db):
+    from pecunia.models import Workspace, WorkspaceMembership
+
+    other_user = await user_factory(email="other_ws@example.com")
+    other_ws = Workspace(id=uuid.uuid4(), name="Other")
+    db.add(other_ws)
+    await db.flush()
+    db.add(WorkspaceMembership(workspace_id=other_ws.id, user_id=other_user.id, role="owner"))
+    await db.commit()
+    token = (
+        await client.post(
+            "/api/v1/auth/login",
+            json={"email": "other_ws@example.com", "password": "correct horse battery staple"},
+        )
+    ).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 # --------------------------------------------------------------------------- #
 # Loan CRUD (API)
 # --------------------------------------------------------------------------- #
@@ -163,6 +187,19 @@ async def test_list_loan_keyset_paginates(client, initialized_instance):
     assert len(ids) == 3  # no overlap, no skips
 
 
+async def test_list_loans_filters_by_contact_id(client, initialized_instance):
+    h = await _auth(client)
+    bank = await _contact(client, h, name="Bank")
+    other_contact = await _contact(client, h, name="Other")
+    matching = await _loan(client, h, name="Matching", contact_id=bank["id"])
+    await _loan(client, h, name="Other loan", contact_id=other_contact["id"])
+    await _loan(client, h, name="No contact")
+
+    lst = (await client.get(f"/api/v1/loans?contact_id={bank['id']}", headers=h)).json()
+
+    assert [loan["id"] for loan in lst["items"]] == [matching["id"]]
+
+
 async def test_get_missing_loan_returns_404(client, initialized_instance):
     h = await _auth(client)
     resp = await client.get(f"/api/v1/loans/{uuid.uuid4()}", headers=h)
@@ -197,6 +234,70 @@ async def test_update_loan_clears_nullable(client, initialized_instance):
     assert resp.status_code == 200
     assert resp.json()["interest_rate_bps"] is None
     assert resp.json()["planned_payment_minor"] == 45_000  # untouched
+
+
+# --------------------------------------------------------------------------- #
+# contact_id link (Loan <-> Contact)
+# --------------------------------------------------------------------------- #
+
+
+async def test_create_loan_with_contact_id(client, initialized_instance):
+    h = await _auth(client)
+    contact = await _contact(client, h)
+    resp = await client.post("/api/v1/loans", json=NEW | {"contact_id": contact["id"]}, headers=h)
+    assert resp.status_code == 201
+    assert resp.json()["contact_id"] == contact["id"]
+
+
+async def test_create_loan_without_contact_id_defaults_null(client, initialized_instance):
+    h = await _auth(client)
+    resp = await client.post("/api/v1/loans", json=NEW, headers=h)
+    assert resp.json()["contact_id"] is None
+
+
+async def test_create_loan_foreign_contact_404(client, initialized_instance, user_factory, db):
+    h = await _auth(client)
+    other_h = await _other_workspace_headers(client, user_factory, db)
+    other_contact = await _contact(client, other_h)
+    resp = await client.post(
+        "/api/v1/loans", json=NEW | {"contact_id": other_contact["id"]}, headers=h
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "CONTACT_NOT_FOUND"
+
+
+async def test_update_loan_sets_and_clears_contact_id(client, initialized_instance):
+    h = await _auth(client)
+    contact = await _contact(client, h)
+    created = await _loan(client, h)
+
+    resp = await client.patch(
+        f"/api/v1/loans/{created['id']}", json={"contact_id": contact["id"]}, headers=h
+    )
+    assert resp.status_code == 200
+    assert resp.json()["contact_id"] == contact["id"]
+
+    cleared = await client.patch(
+        f"/api/v1/loans/{created['id']}", json={"contact_id": None}, headers=h
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["contact_id"] is None
+
+
+async def test_update_loan_foreign_contact_404(client, initialized_instance, user_factory, db):
+    h = await _auth(client)
+    created = await _loan(client, h)
+    other_h = await _other_workspace_headers(client, user_factory, db)
+    other_contact = await _contact(client, other_h)
+
+    resp = await client.patch(
+        f"/api/v1/loans/{created['id']}", json={"contact_id": other_contact["id"]}, headers=h
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "CONTACT_NOT_FOUND"
+    # rejected update leaves the loan untouched
+    got = (await client.get(f"/api/v1/loans/{created['id']}", headers=h)).json()
+    assert got["contact_id"] is None
 
 
 async def test_delete_loan_is_hard_delete(client, initialized_instance):

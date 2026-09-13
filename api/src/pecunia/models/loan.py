@@ -36,7 +36,9 @@ class Loan(Base):
     is principal − Σ payments, reconstructed from the LoanPayment ledger). Its
     remaining balance rolls into net worth per currency (borrowed subtracts,
     lent adds). Money is integer minor units; `interest_rate_bps` is basis
-    points. Mirrors the Portfolio aggregate (parent + child ledger)."""
+    points. Optionally links to a `contact` (the lender/lendee) — ON DELETE
+    SET NULL, so removing the contact never deletes or blocks the loan.
+    Mirrors the Portfolio aggregate (parent + child ledger)."""
 
     __tablename__ = "loans"
     __table_args__ = (
@@ -63,6 +65,9 @@ class Loan(Base):
     next_due: Mapped[date | None] = mapped_column(Date)
     opened_on: Mapped[date | None] = mapped_column(Date)
     description: Mapped[str | None] = mapped_column(Text)
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("contacts.id", ondelete="SET NULL"), index=True
+    )
     is_demo: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)

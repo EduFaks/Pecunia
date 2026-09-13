@@ -190,15 +190,17 @@ class SubscriptionService:
         self,
         workspace_id: uuid.UUID,
         *,
+        contact_id: uuid.UUID | None = None,
         cursor: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> tuple[builtins.list[Subscription], str | None]:
+        stmt = scoped_select(Subscription, workspace_id)
+        if contact_id is not None:
+            stmt = stmt.where(Subscription.contact_id == contact_id)
         # Soonest-renewal-first: the next thing to be billed is what the user
         # looks for. The id tiebreaker keeps a walk deterministic when several
         # subscriptions share a next_renewal (e.g. seeded together) (§6).
-        stmt = scoped_select(Subscription, workspace_id).order_by(
-            Subscription.next_renewal.asc(), Subscription.id.asc()
-        )
+        stmt = stmt.order_by(Subscription.next_renewal.asc(), Subscription.id.asc())
         return await keyset_page(
             self.db,
             stmt,

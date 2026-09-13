@@ -41,7 +41,7 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
         {
             "id", "name", "direction", "principal_minor", "currency",
             "interest_rate_bps", "planned_payment_minor", "payment_frequency",
-            "next_due", "opened_on", "description", "is_demo",
+            "next_due", "opened_on", "description", "contact_id", "is_demo",
         }
     ),
     "loan_payment": frozenset(
