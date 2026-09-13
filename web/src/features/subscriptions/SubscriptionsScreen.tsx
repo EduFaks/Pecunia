@@ -6,6 +6,8 @@ import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import Pill from "../../components/ui/Pill";
 import Spinner from "../../components/ui/Spinner";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import EmptyState from "../../components/data/EmptyState";
 import { DateText, MoneyText, usePreferences } from "../../lib/preferences";
@@ -76,6 +78,26 @@ function SubscriptionsScreen() {
   // Any currency other than the base that still carries subscriptions — money
   // is never summed across currencies (§4), so these ride as secondary lines.
   const otherCurrencies = Object.entries(totals).filter(([code]) => code !== baseCurrency);
+  // Base currency first (even at zero, so the header still shows a figure
+  // before the totals rollup has loaded), then every other currency the
+  // workspace's subscriptions carry — standardized through the shared
+  // `<SummaryHeader>` (Track P) rather than this screen's own bespoke Card.
+  const rollupStats: SummaryStat[] = [
+    {
+      label: "Monthly spend",
+      entries: [
+        { currency: baseCurrency, value_minor: baseTotal.monthly_minor },
+        ...otherCurrencies.map(([code, total]) => ({ currency: code, value_minor: total.monthly_minor })),
+      ],
+    },
+    {
+      label: "Annualized",
+      entries: [
+        { currency: baseCurrency, value_minor: baseTotal.annual_minor },
+        ...otherCurrencies.map(([code, total]) => ({ currency: code, value_minor: total.annual_minor })),
+      ],
+    },
+  ];
 
   const contactFor = (contactId: string | null) =>
     contacts.find((contact) => contact.id === contactId) ?? null;
@@ -123,34 +145,7 @@ function SubscriptionsScreen() {
         <Button onClick={() => setFormState({ mode: "create" })}>New subscription</Button>
       </div>
 
-      {subscriptions.length > 0 ? (
-        <Card className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
-              Monthly spend
-            </p>
-            <MoneyText
-              minor={baseTotal.monthly_minor}
-              currency={baseCurrency}
-              variant="hero"
-              className="text-3xl text-ink"
-            />
-          </div>
-          <div className="sm:text-right">
-            <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">Annualized</p>
-            <MoneyText minor={baseTotal.annual_minor} currency={baseCurrency} className="text-lg text-ink-2" />
-            {otherCurrencies.length > 0 ? (
-              <p className="mt-1 font-mono text-xs text-ink-faint">
-                {otherCurrencies.map(([code, total]) => (
-                  <span key={code} className="ml-2 first:ml-0">
-                    <MoneyText minor={total.monthly_minor} currency={code} className="text-xs" /> / mo
-                  </span>
-                ))}
-              </p>
-            ) : null}
-          </div>
-        </Card>
-      ) : null}
+      {subscriptions.length > 0 ? <SummaryHeader stats={rollupStats} /> : null}
 
       {formState ? (
         <Card>

@@ -3,6 +3,8 @@ import DataList from "../../components/data/DataList";
 import EmptyState from "../../components/data/EmptyState";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
+import SummaryHeader from "../../components/ui/SummaryHeader";
+import type { SummaryStat } from "../../components/ui/SummaryHeader";
 import { useToast } from "../../components/ui/Toast";
 import { ApiError, apiFetch } from "../../lib/api";
 import { DateText, MoneyText } from "../../lib/preferences";
@@ -19,6 +21,7 @@ import TransferBadge from "../transfers/TransferBadge";
 import TransferForm from "../transfers/TransferForm";
 import { useTransfers } from "../transfers/useTransfers";
 import type { TransferOut } from "../transfers/useTransfers";
+import { sumByCurrency } from "../_shared/totals";
 import TransactionFiltersBar from "./TransactionFilters";
 import TransactionForm from "./TransactionForm";
 import {
@@ -85,6 +88,14 @@ function TransactionsScreen() {
   // The transaction whose "Apply to loan" loan picker is currently open (one at
   // a time). Cleared on a successful apply or when toggled off.
   const [applyingTransaction, setApplyingTransaction] = useState<TransactionOut | null>(null);
+  // Mirrors `DataList`'s own `useInfiniteQuery` result (Track P) — the rows
+  // currently on screen for the active filter, plus whether more exist
+  // beyond them. Populated via `DataList`'s `onItemsChange`, never a second
+  // fetch: this is exactly what the list below is already showing.
+  const [loadedPage, setLoadedPage] = useState<{ items: TransactionOut[]; hasNextPage: boolean }>({
+    items: [],
+    hasNextPage: false,
+  });
   const deleteTransaction = useDeleteTransaction();
   const restoreTransaction = useRestoreTransaction();
   const applyToLoan = useApplyTransactionToLoan();
@@ -135,6 +146,29 @@ function TransactionsScreen() {
       `/transactions?${transactionsQueryString(queryFilters, cursor, PAGE_LIMIT)}`,
     );
   }
+
+  // In / out / net over exactly `loadedPage.items` — the rows currently on
+  // screen for the active filter, never a second fetch. Transactions is the
+  // one keyset-paginated screen (CONVENTIONS §6), so more rows can exist
+  // beyond what's loaded; `note` says so honestly rather than implying these
+  // are the filter's full totals.
+  const signedStat = (label: string, items: TransactionOut[]): SummaryStat => ({
+    label,
+    entries: sumByCurrency(
+      items,
+      (transaction) => transaction.amount_minor,
+      (transaction) => transaction.currency,
+    ).map(({ currency, total_minor }) => ({
+      currency,
+      value_minor: total_minor,
+      tone: total_minor > 0 ? "pos" : total_minor < 0 ? "neg" : undefined,
+    })),
+  });
+  const inOutNetStats: SummaryStat[] = [
+    signedStat("In", loadedPage.items.filter((transaction) => transaction.amount_minor > 0)),
+    signedStat("Out", loadedPage.items.filter((transaction) => transaction.amount_minor < 0)),
+    signedStat("Net", loadedPage.items),
+  ];
 
   async function handleDelete(transaction: TransactionOut) {
     try {
@@ -236,9 +270,17 @@ function TransactionsScreen() {
         contacts={contacts}
       />
 
+      {loadedPage.items.length > 0 ? (
+        <SummaryHeader
+          stats={inOutNetStats}
+          note={loadedPage.hasNextPage ? "this page" : undefined}
+        />
+      ) : null}
+
       <DataList<TransactionOut>
         queryKey={transactionsQueryKey(queryFilters)}
         fetchPage={fetchPage}
+        onItemsChange={(items, hasNextPage) => setLoadedPage({ items, hasNextPage })}
         empty={
           filtersActive ? (
             // Distinct from the first-run state below: here there ARE

@@ -70,6 +70,23 @@ const GROCERIES: TransactionOut = {
   updated_at: "2026-09-10T00:00:00Z",
 };
 
+const PAYCHECK: TransactionOut = {
+  id: "t2",
+  account_id: "a1",
+  category_id: null,
+  contact_id: null,
+  project_id: null,
+  transfer_id: null,
+  amount_minor: 250000, // $2,500.00
+  currency: "USD",
+  description: "Paycheck",
+  occurred_on: "2026-09-09",
+  is_demo: false,
+  deleted_at: null,
+  created_at: "2026-09-09T00:00:00Z",
+  updated_at: "2026-09-09T00:00:00Z",
+};
+
 const KITCHEN_PROJECT: ProjectOut = {
   id: "pr-kitchen",
   name: "Kitchen remodel",
@@ -313,6 +330,52 @@ describe("TransactionsScreen", () => {
     expect(within(row).getByText(/checking/i)).toBeInTheDocument();
     expect(within(row).getByText(/84\.99/)).toBeInTheDocument();
     expect(within(row).getByText("Food")).toBeInTheDocument();
+  });
+
+  it("shows in / out / net totals for the currently loaded transactions, with no 'this page' note when the list isn't truncated", async () => {
+    seed([CHECKING], [GROCERIES, PAYCHECK]);
+    renderScreen();
+
+    await screen.findByText("Groceries");
+    await screen.findByText("Paycheck");
+
+    const inBlock = (await screen.findByText("In")).parentElement!;
+    const outBlock = screen.getByText("Out").parentElement!;
+    const netBlock = screen.getByText("Net").parentElement!;
+
+    // In: 250000 -> $2,500.00 (positive)
+    const inAmount = within(inBlock).getByText("$2,500.00");
+    expect(inAmount.className).toMatch(/text-positive/);
+    // Out: -8499 -> -$84.99 (negative)
+    const outAmount = within(outBlock).getByText("-$84.99");
+    expect(outAmount.className).toMatch(/text-negative/);
+    // Net: 250000 - 8499 = 241501 -> $2,415.01 (positive)
+    const netAmount = within(netBlock).getByText("$2,415.01");
+    expect(netAmount.className).toMatch(/text-positive/);
+
+    expect(screen.queryByText(/this page/i)).not.toBeInTheDocument();
+  });
+
+  it("labels the totals 'this page' when more transactions remain beyond the loaded page", async () => {
+    mockApiFetch.mockReset().mockImplementation((path: string, opts?: { method?: string }) => {
+      const method = opts?.method ?? "GET";
+      if (path.startsWith("/accounts?") && method === "GET") {
+        return Promise.resolve({ items: [CHECKING], next_cursor: null });
+      }
+      if (path.startsWith("/categories?") || path.startsWith("/contacts?") || path.startsWith("/projects?") || path.startsWith("/transfers?") || path.startsWith("/loans?")) {
+        return Promise.resolve({ items: [], next_cursor: null });
+      }
+      if (path.startsWith("/transactions?") && method === "GET") {
+        // Always reports another page beyond this one.
+        return Promise.resolve({ items: [GROCERIES], next_cursor: "cursor-2" });
+      }
+      return Promise.reject(new Error(`unexpected call: ${method} ${path}`));
+    });
+    renderScreen();
+
+    await screen.findByText("Groceries");
+
+    expect(await screen.findByText(/this page/i)).toBeInTheDocument();
   });
 
   it("shows a transaction's contact in its row", async () => {

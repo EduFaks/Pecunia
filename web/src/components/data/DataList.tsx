@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { QueryKey } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { useEffect } from "react";
 import Button from "../ui/Button";
 import Callout from "../ui/Callout";
 import Spinner from "../ui/Spinner";
@@ -24,6 +25,13 @@ export interface DataListProps<T> {
   /** Optional content rendered above the rows — a table header row, a
    * caption — inside the same horizontally-scrolling container as the rows. */
   header?: ReactNode;
+  /** Fired after every successful fetch (first page and every "Load more")
+   * with the full accumulated `items` and whether more pages remain — lets a
+   * caller aggregate over exactly what's currently on screen (e.g. a
+   * per-currency summary total) without a second fetch: this list's own
+   * `useInfiniteQuery` stays the only network call, the callback just
+   * mirrors its result. Never fired while loading or on error. */
+  onItemsChange?: (items: T[], hasNextPage: boolean) => void;
   className?: string;
 }
 
@@ -51,6 +59,7 @@ function DataList<T extends { id: string | number }>({
   renderRow,
   empty,
   header,
+  onItemsChange,
   className,
 }: DataListProps<T>) {
   const query = useInfiniteQuery({
@@ -59,6 +68,17 @@ function DataList<T extends { id: string | number }>({
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
   });
+
+  useEffect(() => {
+    if (query.data) {
+      onItemsChange?.(query.data.pages.flatMap((page) => page.items), query.hasNextPage);
+    }
+    // `onItemsChange` is intentionally excluded: callers typically pass an
+    // inline closure that isn't memoized, and re-invoking it with the same
+    // items on every render would be noise, not a real data change — same
+    // rationale as `PasswordStrength`'s `onScoreChange` effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query.data, query.hasNextPage]);
 
   if (query.isLoading) {
     return (
