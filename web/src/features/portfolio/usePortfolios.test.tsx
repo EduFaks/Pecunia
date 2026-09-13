@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import {
   useAddHolding,
+  useCoinSearch,
   useCreatePortfolio,
   useDeleteHolding,
   useDeletePortfolio,
@@ -13,6 +14,7 @@ import {
   usePortfolio,
   usePortfolios,
   useRecordPrice,
+  useRefreshPrices,
   useUpdateHolding,
   useUpdatePortfolio,
 } from "./usePortfolios";
@@ -48,7 +50,10 @@ const HOLDING = {
   name: "Vanguard S&P 500",
   symbol: "VOO",
   quantity: "12.50000000",
+  coingecko_id: null,
   latest_unit_price_minor: 45_000,
+  latest_price_source: null,
+  latest_price_as_of: null,
   value_minor: 562_500,
   is_demo: false,
   created_at: "2026-01-01T00:00:00Z",
@@ -250,5 +255,45 @@ describe("useRecordPrice", () => {
       json: { unit_price_minor: 46_000, as_of: "2026-06-01", source: null },
     });
     expectNetWorthInvalidations(invalidateSpy);
+  });
+});
+
+describe("useRefreshPrices", () => {
+  it("posts the refresh and invalidates portfolios + net-worth keys", async () => {
+    const RESULT = { updated: 2, skipped: 1, errors: [] };
+    mockApiFetch.mockReset().mockResolvedValue(RESULT);
+    const { wrapper, queryClient } = makeWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useRefreshPrices(), { wrapper });
+    result.current.mutate();
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApiFetch).toHaveBeenCalledWith("/portfolios/refresh-prices", { method: "POST" });
+    expect(result.current.data).toEqual(RESULT);
+    expectNetWorthInvalidations(invalidateSpy);
+  });
+});
+
+describe("useCoinSearch", () => {
+  beforeEach(() => {
+    mockApiFetch.mockReset();
+  });
+
+  it("fetches the coin-search proxy with the query string", async () => {
+    const COINS = [{ id: "bitcoin", symbol: "btc", name: "Bitcoin" }];
+    mockApiFetch.mockResolvedValue(COINS);
+    const { wrapper } = makeWrapper();
+
+    const { result } = renderHook(() => useCoinSearch("bit"), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(COINS));
+    expect(mockApiFetch).toHaveBeenCalledWith("/portfolios/coins?q=bit");
+  });
+
+  it("does not fetch while disabled", () => {
+    const { wrapper } = makeWrapper();
+    renderHook(() => useCoinSearch("bit", false), { wrapper });
+    expect(mockApiFetch).not.toHaveBeenCalled();
   });
 });

@@ -54,17 +54,40 @@ export interface PortfolioPage {
 /** Mirrors `HoldingOut`. `quantity` is a STRING (a `Numeric(28,8)` share/unit
  * count serialized exactly — never a float, never money); `value_minor` and
  * `latest_unit_price_minor` are integer minor units, the latter `null` until
- * the holding has had a price recorded. */
+ * the holding has had a price recorded. `coingecko_id` non-null makes the
+ * holding auto-priceable (Track Q); `latest_price_source`/`latest_price_as_of`
+ * describe that same latest price's provenance (`"coingecko"` for an
+ * automated refresh, whatever the user typed — or `null` — for a manual
+ * record), both `null` until a price has ever been recorded. */
 export interface HoldingOut {
   id: string;
   portfolio_id: string;
   name: string;
   symbol: string | null;
   quantity: string;
+  coingecko_id: string | null;
   latest_unit_price_minor: number | null;
+  latest_price_source: string | null;
+  latest_price_as_of: string | null;
   value_minor: number;
   is_demo: boolean;
   created_at: string;
+}
+
+/** Mirrors `CoinOut` — one CoinGecko coin as returned by the coin-search
+ * proxy (`GET /portfolios/coins?q=`). */
+export interface CoinOut {
+  id: string;
+  symbol: string;
+  name: string;
+}
+
+/** Mirrors `RefreshPricesOut` — the summary `POST /portfolios/refresh-prices`
+ * returns after refreshing every auto-priceable holding in the workspace. */
+export interface RefreshPricesResult {
+  updated: number;
+  skipped: number;
+  errors: string[];
 }
 
 export interface HoldingPage {
@@ -100,11 +123,13 @@ export interface UpdatePortfolioPayload {
 /** Mirrors `HoldingIn`. `quantity` is sent as a STRING so the exact typed
  * value reaches the backend's `Decimal` column without a float round-trip
  * (CONVENTIONS §4 — quantity is not money, but the same never-float
- * discipline protects fractional-share precision). */
+ * discipline protects fractional-share precision). `coingecko_id` non-null
+ * makes the holding auto-priceable — set via `CoinPicker`. */
 export interface CreateHoldingPayload {
   name: string;
   quantity: string;
   symbol?: string | null;
+  coingecko_id?: string | null;
 }
 
 /** Mirrors `HoldingUpdate`. */
@@ -112,6 +137,7 @@ export interface UpdateHoldingPayload {
   name?: string;
   quantity?: string;
   symbol?: string | null;
+  coingecko_id?: string | null;
 }
 
 /** Mirrors `HoldingPriceIn`. A price carries no currency of its own — it is
@@ -250,5 +276,33 @@ export function useRecordPrice(portfolioId: string, holdingId: string) {
         json: payload,
       }),
     onSuccess: () => invalidatePortfolios(queryClient),
+  });
+}
+
+/** `POST /portfolios/refresh-prices` — refreshes every auto-priceable
+ * (`coingecko_id` set) holding in the workspace and returns the
+ * `{updated, skipped, errors}` summary. Same invalidation as every other
+ * price-moving mutation here (it's what a recorded price does, just for
+ * many holdings at once). */
+export function useRefreshPrices() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<RefreshPricesResult>("/portfolios/refresh-prices", { method: "POST" }),
+    onSuccess: () => invalidatePortfolios(queryClient),
+  });
+}
+
+/** `GET /portfolios/coins?q=` — the cached CoinGecko coin-list proxy backing
+ * `CoinPicker`'s search. Its own top-level `qk.coins(q)` prefix (see
+ * `lib/queries.ts`) — a static coin catalog, not portfolio data, so it's
+ * never touched by `invalidatePortfolios`. `enabled` lets a caller (the
+ * picker, while its dropdown is closed) skip fetching entirely rather than
+ * querying with an empty/stale string. */
+export function useCoinSearch(q: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.coins(q),
+    queryFn: () => apiFetch<CoinOut[]>(`/portfolios/coins?q=${encodeURIComponent(q)}`),
+    enabled,
   });
 }

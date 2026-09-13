@@ -31,6 +31,7 @@ from pecunia.api.transfers import router as transfers_router
 from pecunia.config import get_settings
 from pecunia.db import init_engine
 from pecunia.events import event_bus
+from pecunia.scheduler import start_price_sync_task
 from pecunia.secrets import resolve_secret_key
 from pecunia.security.session_cache import SessionCache
 from pecunia.services.subscribers import register_subscribers
@@ -66,6 +67,11 @@ async def lifespan(app: FastAPI):
     sweep_task = asyncio.create_task(_sweep_loop(sessionmaker))
     app.state.sweep_task = sweep_task
 
+    # Daily crypto price sync (Track Q) — gated by PECUNIA_ENABLE_PRICE_SYNC;
+    # `None` when disabled, so there is nothing to cancel on shutdown.
+    price_sync_task = start_price_sync_task(settings, sessionmaker)
+    app.state.price_sync_task = price_sync_task
+
     yield
 
     # Cancel the sweep task on shutdown
@@ -74,6 +80,13 @@ async def lifespan(app: FastAPI):
         await sweep_task
     except asyncio.CancelledError:
         pass
+
+    if price_sync_task is not None:
+        price_sync_task.cancel()
+        try:
+            await price_sync_task
+        except asyncio.CancelledError:
+            pass
 
     await engine.dispose()
 

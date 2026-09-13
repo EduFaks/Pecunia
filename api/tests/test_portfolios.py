@@ -23,10 +23,14 @@ async def _portfolio(client, h, **overrides):
     return (await client.post("/api/v1/portfolios", json=body, headers=h)).json()
 
 
-async def _holding(client, h, portfolio_id, *, quantity="1", name="Fund", symbol=None):
+async def _holding(
+    client, h, portfolio_id, *, quantity="1", name="Fund", symbol=None, coingecko_id=None
+):
     body = {"name": name, "quantity": quantity}
     if symbol is not None:
         body["symbol"] = symbol
+    if coingecko_id is not None:
+        body["coingecko_id"] = coingecko_id
     return (
         await client.post(f"/api/v1/portfolios/{portfolio_id}/holdings", json=body, headers=h)
     ).json()
@@ -139,6 +143,53 @@ async def test_add_and_get_holding(client, initialized_instance):
     assert got.json()["id"] == holding["id"]
 
 
+async def test_add_holding_with_coingecko_id(client, initialized_instance):
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    resp = await client.post(
+        f"/api/v1/portfolios/{p['id']}/holdings",
+        json={"name": "Bitcoin", "quantity": "0.5", "coingecko_id": "bitcoin"},
+        headers=h,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["coingecko_id"] == "bitcoin"
+    # a holding created without one defaults to null — not auto-priceable.
+    manual = await _holding(client, h, p["id"], quantity="1")
+    assert manual["coingecko_id"] is None
+
+
+async def test_update_holding_sets_and_clears_coingecko_id(client, initialized_instance):
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    holding = await _holding(client, h, p["id"], quantity="1")
+    assert holding["coingecko_id"] is None
+
+    resp = await client.patch(
+        f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}",
+        json={"coingecko_id": "ethereum"},
+        headers=h,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["coingecko_id"] == "ethereum"
+
+    # PATCH omits the field entirely -> untouched (UNSET semantics).
+    resp = await client.patch(
+        f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}",
+        json={"name": "Ether"},
+        headers=h,
+    )
+    assert resp.json()["coingecko_id"] == "ethereum"
+
+    # PATCH sends an explicit null -> cleared.
+    resp = await client.patch(
+        f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}",
+        json={"coingecko_id": None},
+        headers=h,
+    )
+    assert resp.json()["coingecko_id"] is None
+
+
 async def test_list_holdings(client, initialized_instance):
     h = await _auth(client)
     p = await _portfolio(client, h)
@@ -233,6 +284,18 @@ async def test_record_price_then_value(client, initialized_instance):
     ).json()
     assert got["latest_unit_price_minor"] == 1000
     assert got["value_minor"] == 1500  # round(1.5 * 1000)
+    assert got["latest_price_source"] == "manual"
+    assert got["latest_price_as_of"] == "2026-06-01"
+
+
+async def test_holding_out_latest_price_fields_are_null_with_no_price_recorded(
+    client, initialized_instance
+):
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    holding = await _holding(client, h, p["id"], quantity="1")
+    assert holding["latest_price_source"] is None
+    assert holding["latest_price_as_of"] is None
 
 
 async def test_portfolio_value_is_sum_of_holdings(client, initialized_instance):
@@ -421,3 +484,116 @@ async def test_portfolio_value_minor_sums_holdings(db, initialized_instance):
     await _svc_price(db, ws_id, h2, unit_price_minor=6_000_000, as_of=date(2026, 6, 1))
     assert await PortfolioService(db).portfolio_value_minor(p) == 1500 + 900_000
     _ = h3
+
+
+async def test_latest_price_returns_the_full_row(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    p = await _svc_portfolio(db, ws_id)
+    hd = await _svc_holding(db, ws_id, p, quantity="1")
+    assert await PortfolioService(db).latest_price(hd) is None
+    await _svc_price(db, ws_id, hd, unit_price_minor=1000, as_of=date(2026, 1, 1))
+    await _svc_price(db, ws_id, hd, unit_price_minor=1500, as_of=date(2026, 6, 1))
+    latest = await PortfolioService(db).latest_price(hd)
+    assert latest.unit_price_minor == 1500
+    assert latest.as_of == date(2026, 6, 1)
+    earlier = await PortfolioService(db).latest_price(hd, on_date=date(2026, 3, 1))
+    assert earlier.unit_price_minor == 1000
+
+
+# --------------------------------------------------------------------------- #
+# Crypto price sync — POST /portfolios/refresh-prices (Task 3, Track Q)
+# --------------------------------------------------------------------------- #
+
+
+async def test_refresh_prices_requires_auth(client, initialized_instance):
+    resp = await client.post("/api/v1/portfolios/refresh-prices")
+    assert resp.status_code == 401
+
+
+async def test_refresh_prices_endpoint_uses_the_injected_provider(
+    client, app, initialized_instance
+):
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    holding = await _holding(client, h, p["id"], quantity="0.5", coingecko_id="bitcoin")
+
+    fake = FakePriceProvider(prices_by_currency={"USD": {"bitcoin": 6_500_000}})
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.post("/api/v1/portfolios/refresh-prices", headers=h)
+    assert resp.status_code == 200
+    assert resp.json() == {"updated": 1, "skipped": 0, "errors": []}
+
+    got = (
+        await client.get(f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}", headers=h)
+    ).json()
+    assert got["latest_unit_price_minor"] == 6_500_000
+    assert got["latest_price_source"] == "coingecko"
+
+
+# --------------------------------------------------------------------------- #
+# Coin-search proxy — GET /portfolios/coins?q= (Task 4, Track Q)
+# --------------------------------------------------------------------------- #
+
+_COINS = [
+    {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+    {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+    {"id": "bitcoin-cash", "symbol": "bch", "name": "Bitcoin Cash"},
+]
+
+
+async def test_coins_requires_auth(client, initialized_instance):
+    resp = await client.get("/api/v1/portfolios/coins")
+    assert resp.status_code == 401
+
+
+async def test_coins_endpoint_filters_by_q(client, app, initialized_instance):
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    fake = FakePriceProvider(coins=_COINS)
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.get("/api/v1/portfolios/coins", params={"q": "bitcoin"}, headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [c["id"] for c in body] == ["bitcoin", "bitcoin-cash"]
+    assert body[0] == {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}
+
+    resp_eth = await client.get("/api/v1/portfolios/coins", params={"q": "eth"}, headers=h)
+    assert [c["id"] for c in resp_eth.json()] == ["ethereum"]
+
+
+async def test_coins_endpoint_caps_results(client, app, initialized_instance):
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    many = [{"id": str(i), "symbol": "co", "name": "Coin"} for i in range(30)]
+    fake = FakePriceProvider(coins=many)
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.get("/api/v1/portfolios/coins", headers=h)
+    assert len(resp.json()) == 20
+
+
+def test_get_price_provider_caches_one_instance_on_app_state():
+    """The DI half of Task 4's "cache populated on first call": the
+    dependency itself must hand back the SAME provider across calls (via
+    `app.state`), so `CoinGeckoPriceProvider.coins()`'s own memoization
+    (tested directly in test_price_provider.py) actually spans requests
+    instead of being rebuilt — and re-fetched — every time."""
+    from types import SimpleNamespace
+
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import CoinGeckoPriceProvider
+
+    fake_request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    first = get_price_provider(fake_request)
+    second = get_price_provider(fake_request)
+    assert first is second
+    assert isinstance(first, CoinGeckoPriceProvider)

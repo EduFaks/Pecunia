@@ -47,6 +47,11 @@ class Holding(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     symbol: Mapped[str | None] = mapped_column(Text)
     quantity: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
+    # Nullable — non-null makes the holding auto-priceable (Track Q): the
+    # daily job / on-demand refresh look up this CoinGecko coin id and record
+    # its price in the parent portfolio's currency. `symbol` stays free-text
+    # display-only; this is the unambiguous provider key.
+    coingecko_id: Mapped[str | None] = mapped_column(Text)
     is_demo: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)

@@ -7,6 +7,14 @@ import uuid
 if not os.path.exists("/var/run/docker.sock"):
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
+# Belt-and-braces: PECUNIA_ENABLE_PRICE_SYNC defaults to true, and a handful
+# of tests (test_lifespan.py) boot the *real* ASGI lifespan — which would
+# otherwise start the daily crypto sync task with a real CoinGeckoProvider
+# against whatever's in the shared session DB at that moment. Tests that
+# specifically exercise the scheduler (test_scheduler.py) construct their own
+# `Settings(enable_price_sync=...)` directly, which overrides this.
+os.environ.setdefault("PECUNIA_ENABLE_PRICE_SYNC", "false")
+
 import httpx
 import pytest
 import sqlalchemy as sa

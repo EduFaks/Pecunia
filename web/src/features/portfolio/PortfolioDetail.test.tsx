@@ -33,7 +33,10 @@ const VOO: HoldingOut = {
   name: "Vanguard S&P 500",
   symbol: "VOO",
   quantity: "12.50000000",
+  coingecko_id: null,
   latest_unit_price_minor: 45_000, // $450.00
+  latest_price_source: null,
+  latest_price_as_of: null,
   value_minor: 562_500, // $5,625.00
   is_demo: false,
   created_at: "2026-01-01T00:00:00Z",
@@ -58,14 +61,22 @@ function installFakeBackend(options: { portfolio?: PortfolioOut; holdings?: Hold
         return Promise.resolve({ items: holdings, next_cursor: null });
       }
       if (path === "/portfolios/pf1/holdings" && method === "POST") {
-        const body = opts?.json as { name: string; quantity: string; symbol?: string | null };
+        const body = opts?.json as {
+          name: string;
+          quantity: string;
+          symbol?: string | null;
+          coingecko_id?: string | null;
+        };
         const created: HoldingOut = {
           id: "h-new",
           portfolio_id: "pf1",
           name: body.name,
           symbol: body.symbol ?? null,
           quantity: body.quantity,
+          coingecko_id: body.coingecko_id ?? null,
           latest_unit_price_minor: null,
+          latest_price_source: null,
+          latest_price_as_of: null,
           value_minor: 0,
           is_demo: false,
           created_at: "2026-06-01T00:00:00Z",
@@ -84,6 +95,9 @@ function installFakeBackend(options: { portfolio?: PortfolioOut; holdings?: Hold
           is_demo: false,
           created_at: "2026-06-01T00:00:00Z",
         });
+      }
+      if (path === "/portfolios/refresh-prices" && method === "POST") {
+        return Promise.resolve({ updated: 2, skipped: 1, errors: [] });
       }
       if (path === "/portfolios/pf1/holdings/h1" && method === "DELETE") {
         return Promise.resolve(undefined);
@@ -201,10 +215,44 @@ describe("PortfolioDetail", () => {
     await waitFor(() =>
       expect(mockApiFetch).toHaveBeenCalledWith("/portfolios/pf1/holdings", {
         method: "POST",
-        json: { name: "Apple", quantity: "3", symbol: null },
+        json: { name: "Apple", quantity: "3", symbol: null, coingecko_id: null },
       }),
     );
     expect(await screen.findByText("Apple")).toBeInTheDocument();
+  });
+
+  it("shows a price-provenance caption (source + relative as_of) once a price has been recorded", async () => {
+    installFakeBackend({
+      holdings: [
+        { ...VOO, latest_price_source: "coingecko", latest_price_as_of: "2026-01-01" },
+      ],
+    });
+    renderDetail();
+
+    const row = (await screen.findByText("Vanguard S&P 500")).closest("tr")!;
+    expect(within(row).getByText(/via coingecko/i)).toBeInTheDocument();
+  });
+
+  it("shows no provenance caption when no price has ever been recorded", async () => {
+    installFakeBackend({
+      holdings: [{ ...VOO, latest_unit_price_minor: null, value_minor: 0 }],
+    });
+    renderDetail();
+
+    const row = (await screen.findByText("Vanguard S&P 500")).closest("tr")!;
+    expect(within(row).queryByText(/via/i)).not.toBeInTheDocument();
+  });
+
+  it("refreshes crypto prices via the Update prices button and toasts the summary", async () => {
+    renderDetail();
+    await screen.findByText("Vanguard S&P 500");
+
+    fireEvent.click(screen.getByRole("button", { name: /update prices/i }));
+
+    await waitFor(() =>
+      expect(mockApiFetch).toHaveBeenCalledWith("/portfolios/refresh-prices", { method: "POST" }),
+    );
+    expect(await screen.findByText(/updated 2.*skipped 1/i)).toBeInTheDocument();
   });
 
   it("confirms before deleting a holding, then deletes on confirm", async () => {

@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
 import TextField from "../../components/ui/TextField";
+import CoinPicker from "./CoinPicker";
 import { parseQuantity } from "./quantity";
 import { useAddHolding, useUpdateHolding } from "./usePortfolios";
 import type { HoldingOut } from "./usePortfolios";
@@ -17,12 +18,15 @@ export interface HoldingFormProps {
 }
 
 /**
- * Create/edit form for one holding: name, an optional ticker symbol, and a
+ * Create/edit form for one holding: name, an optional ticker symbol, a
  * quantity (fractional share/unit count, validated via `parseQuantity` and
  * sent as a STRING to preserve exact precision — CONVENTIONS §4: quantity is
- * not money, but never a float either). A holding inherits its portfolio's
- * currency, so there is no currency field here; the price (and thus value) is
- * recorded separately via `PriceUpdateForm`.
+ * not money, but never a float either), and an optional CoinGecko coin id
+ * (`CoinPicker`) that makes the holding auto-priceable (Track Q). A holding
+ * inherits its portfolio's currency, so there is no currency field here; a
+ * *manual* price (and thus value) is recorded separately via
+ * `PriceUpdateForm` — an auto-priced holding instead gets its price from the
+ * daily sync or the "Update prices" button.
  */
 function HoldingForm({ portfolioId, holding, onSuccess, onCancel }: HoldingFormProps) {
   const isEdit = holding !== undefined;
@@ -30,6 +34,7 @@ function HoldingForm({ portfolioId, holding, onSuccess, onCancel }: HoldingFormP
   const [name, setName] = useState(holding?.name ?? "");
   const [symbol, setSymbol] = useState(holding?.symbol ?? "");
   const [quantity, setQuantity] = useState(holding?.quantity ?? "");
+  const [coingeckoId, setCoingeckoId] = useState(holding?.coingecko_id ?? "");
   const [quantityError, setQuantityError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +63,7 @@ function HoldingForm({ portfolioId, holding, onSuccess, onCancel }: HoldingFormP
           name: trimmedName,
           quantity: normalizedQuantity,
           symbol: symbol.trim() || null,
+          coingecko_id: coingeckoId || null,
         });
         onSuccess(updated);
         return;
@@ -66,6 +72,7 @@ function HoldingForm({ portfolioId, holding, onSuccess, onCancel }: HoldingFormP
         name: trimmedName,
         quantity: normalizedQuantity,
         symbol: symbol.trim() || null,
+        coingecko_id: coingeckoId || null,
       });
       onSuccess(created);
     } catch {
@@ -103,6 +110,8 @@ function HoldingForm({ portfolioId, holding, onSuccess, onCancel }: HoldingFormP
           required
         />
       </div>
+
+      <CoinPicker value={coingeckoId} onChange={(coinId) => setCoingeckoId(coinId)} />
 
       {error ? <Callout variant="negative">{error}</Callout> : null}
 

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import HoldingForm from "./HoldingForm";
@@ -17,7 +17,10 @@ const HOLDING: HoldingOut = {
   name: "Vanguard S&P 500",
   symbol: "VOO",
   quantity: "12.50000000",
+  coingecko_id: null,
   latest_unit_price_minor: 45_000,
+  latest_price_source: null,
+  latest_price_as_of: null,
   value_minor: 562_500,
   is_demo: false,
   created_at: "2026-01-01T00:00:00Z",
@@ -39,6 +42,10 @@ describe("HoldingForm", () => {
     mockApiFetch.mockReset();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("creates a holding, sending the quantity as a string", async () => {
     mockApiFetch.mockResolvedValue(HOLDING);
     const { onSuccess } = renderForm();
@@ -52,7 +59,7 @@ describe("HoldingForm", () => {
     await waitFor(() =>
       expect(mockApiFetch).toHaveBeenCalledWith("/portfolios/pf1/holdings", {
         method: "POST",
-        json: { name: "Vanguard S&P 500", quantity: "12.5", symbol: "VOO" },
+        json: { name: "Vanguard S&P 500", quantity: "12.5", symbol: "VOO", coingecko_id: null },
       }),
     );
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(HOLDING));
@@ -83,6 +90,40 @@ describe("HoldingForm", () => {
 
     expect(await screen.findByText(/greater than zero/i)).toBeInTheDocument();
     expect(mockApiFetch).not.toHaveBeenCalled();
+  });
+
+  it("picking a coin sends its coingecko_id", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockApiFetch.mockImplementation((path: string) => {
+      if (typeof path === "string" && path.startsWith("/portfolios/coins")) {
+        return Promise.resolve([{ id: "bitcoin", symbol: "btc", name: "Bitcoin" }]);
+      }
+      return Promise.resolve({ ...HOLDING, coingecko_id: "bitcoin" });
+    });
+    const { onSuccess } = renderForm();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Bitcoin" } });
+    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "0.5" } });
+
+    fireEvent.focus(screen.getByRole("combobox"));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "bit" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /^Bitcoin btc$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add holding/i }));
+
+    await waitFor(() =>
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        "/portfolios/pf1/holdings",
+        expect.objectContaining({
+          method: "POST",
+          json: expect.objectContaining({ coingecko_id: "bitcoin" }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(onSuccess).toHaveBeenCalled());
   });
 
   it("edits an existing holding via PATCH", async () => {
