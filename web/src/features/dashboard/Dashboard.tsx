@@ -32,7 +32,10 @@ import { buildBalanceSeries } from "./balanceSeries";
 import type { TransactionLite } from "./balanceSeries";
 import { selectPrimaryAccount } from "./balances";
 import type { AccountSummary, AssetSummary } from "./balances";
+import CommittedMonthlyCard from "./CommittedMonthlyCard";
+import NetWorthChangeCard from "./NetWorthChangeCard";
 import RecentActivity from "./RecentActivity";
+import SavingsRateCard from "./SavingsRateCard";
 import UpcomingWidget from "./UpcomingWidget";
 
 interface KeysetResponse<T> {
@@ -328,6 +331,12 @@ function Dashboard() {
         loans={loans}
         baseCurrency={baseCurrency}
       />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <SavingsRateCard />
+        <CommittedMonthlyCard />
+        <NetWorthChangeCard />
+      </div>
 
       <GraphCard title="Net worth over time">
         {netWorthQuery.isError ? (

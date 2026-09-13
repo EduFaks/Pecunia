@@ -47,6 +47,7 @@ function mockEndpoints(overrides: {
   cashflow?: Record<string, unknown[]>;
   spendingByCategory?: Record<string, unknown[]>;
   forecast?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
   upcoming?: { due?: unknown[]; over_budget?: unknown[] };
 }) {
   mockApiFetch.mockReset().mockImplementation((path: string) => {
@@ -74,6 +75,9 @@ function mockEndpoints(overrides: {
     }
     if (path.startsWith("/analytics/forecast")) {
       return Promise.resolve(overrides.forecast ?? {});
+    }
+    if (path.startsWith("/analytics/summary")) {
+      return Promise.resolve(overrides.summary ?? {});
     }
     if (path.startsWith("/accounts")) {
       return Promise.resolve({ items: overrides.accounts ?? [], next_cursor: null });
@@ -386,6 +390,36 @@ describe("Dashboard", () => {
     expect(await screen.findByText(/no net-worth history yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no income or spending recorded yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no spending to break down yet/i)).toBeInTheDocument();
+  });
+
+  it("mounts the three KPI tiles from /analytics/summary", async () => {
+    mockEndpoints({
+      accounts: ONE_ACCOUNT,
+      summary: {
+        USD: {
+          savings: {
+            income_minor: 10_000, spend_minor: 4_000, saved_minor: 6_000, rate_bps: 6_000,
+            prev_saved_minor: 0, prev_rate_bps: 0,
+          },
+          committed_monthly: {
+            total_minor: 5_200, subscriptions_minor: 3_200, loans_minor: 1_200, planned_minor: 800,
+          },
+          net_worth_change: {
+            now_minor: 105_000, start_of_month_minor: 70_000, delta_minor: 35_000, pct_bps: 5_000,
+            movers: [{ label: "Cash", delta_minor: 20_000 }],
+          },
+        },
+      },
+    });
+
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: /savings rate/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /committed monthly cost/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /net worth change/i })).toBeInTheDocument();
+    expect(await screen.findByText(/60\.00/)).toBeInTheDocument(); // savings: $60.00 saved
+    expect(await screen.findByText(/52\.00/)).toBeInTheDocument(); // committed: $52.00
+    expect(await screen.findByText(/350\.00/)).toBeInTheDocument(); // net-worth change: $350.00
   });
 
   it("mounts the Upcoming widget, rendering a due item from /analytics/upcoming", async () => {

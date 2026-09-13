@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyticsPath, forecastPath, selectCurrency } from "./useAnalytics";
+import { analyticsPath, forecastPath, selectCurrency, selectSummary } from "./useAnalytics";
 import type { NetWorthPoint, PerCurrency } from "./useAnalytics";
 
 const RESPONSE: PerCurrency<NetWorthPoint> = {
@@ -56,5 +56,32 @@ describe("forecastPath", () => {
 
   it("appends months for an explicit horizon", () => {
     expect(forecastPath(3)).toBe("/analytics/forecast?months=3");
+  });
+});
+
+describe("selectSummary", () => {
+  const SUMMARY = {
+    USD: {
+      savings: {
+        income_minor: 10000, spend_minor: 4000, saved_minor: 6000, rate_bps: 6000,
+        prev_saved_minor: 0, prev_rate_bps: 0,
+      },
+      committed_monthly: { total_minor: 5000, subscriptions_minor: 5000, loans_minor: 0, planned_minor: 0 },
+      net_worth_change: {
+        now_minor: 105000, start_of_month_minor: 70000, delta_minor: 35000, pct_bps: 5000, movers: [],
+      },
+    },
+  };
+
+  it("picks the requested currency's summary out of the per-currency response", () => {
+    expect(selectSummary(SUMMARY, "USD")).toEqual(SUMMARY.USD);
+  });
+
+  it("returns undefined for a currency absent from the response", () => {
+    expect(selectSummary(SUMMARY, "EUR")).toBeUndefined();
+  });
+
+  it("returns undefined when the response is undefined (still loading)", () => {
+    expect(selectSummary(undefined, "USD")).toBeUndefined();
   });
 });

@@ -300,3 +300,81 @@ export function useForecast({
     select: (data) => data?.[target] ?? EMPTY_FORECAST,
   });
 }
+
+/** Mirrors `SavingsOut` — this month's income/spend so far, plus the prior
+ * month's, for the dashboard savings-rate tile's trend arrow. */
+export interface Savings {
+  income_minor: number;
+  spend_minor: number;
+  saved_minor: number;
+  rate_bps: number;
+  prev_saved_minor: number;
+  prev_rate_bps: number;
+}
+
+/** Mirrors `CommittedMonthlyOut` — active subscriptions + loan planned
+ * payments + active recurring planned expenses, each normalized to a
+ * monthly figure. */
+export interface CommittedMonthly {
+  total_minor: number;
+  subscriptions_minor: number;
+  loans_minor: number;
+  planned_minor: number;
+}
+
+/** Mirrors `Mover` — one net-worth component's delta since the start of the
+ * month (`label` is "Cash"/"Assets"/"Investments"/"Debts"). */
+export interface Mover {
+  label: string;
+  delta_minor: number;
+}
+
+/** Mirrors `NetWorthChangeOut` — `net_worth_as_of(today)` vs. the start of
+ * the month, plus the top non-zero component movers. */
+export interface NetWorthChange {
+  now_minor: number;
+  start_of_month_minor: number;
+  delta_minor: number;
+  pct_bps: number;
+  movers: Mover[];
+}
+
+/** Mirrors `SummaryOut` — the three dashboard KPI tiles' figures for one
+ * currency. */
+export interface Summary {
+  savings: Savings;
+  committed_monthly: CommittedMonthly;
+  net_worth_change: NetWorthChange;
+}
+
+/**
+ * Picks one currency's summary out of the per-currency `/analytics/summary`
+ * response — `undefined` for a currency absent from the response (or while
+ * still loading), so each KPI card can show its own calm empty state rather
+ * than a fabricated all-zero one. Kept pure and exported so the selection is
+ * unit-testable without rendering a hook (mirrors `selectCurrency`).
+ */
+export function selectSummary(
+  data: Record<string, Summary> | undefined,
+  currency: string,
+): Summary | undefined {
+  return data?.[currency];
+}
+
+/**
+ * The dashboard's three KPI tiles (Track R, v1.4) — savings rate, committed
+ * monthly cost, and net-worth change — one currency's `Summary` picked out
+ * of the per-currency response (base currency by default, same `select`-side
+ * pick every other analytics hook here makes). No reporting window: the
+ * endpoint always reads "now", so there's nothing to put in the query key
+ * beyond the bare `qk.analytics.summary()` slot.
+ */
+export function useSummary({ currency }: { currency?: string } = {}) {
+  const { base_currency } = usePreferences();
+  const target = currency ?? base_currency;
+  return useQuery({
+    queryKey: qk.analytics.summary(),
+    queryFn: () => apiFetch<Record<string, Summary>>("/analytics/summary"),
+    select: (data) => selectSummary(data, target),
+  });
+}

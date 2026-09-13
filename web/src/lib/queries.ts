@@ -184,6 +184,11 @@ export const qk = {
      * `["analytics"]` prefix for invalidation. */
     forecast: (months?: number) =>
       months ? (["analytics", "forecast", { months }] as const) : (["analytics", "forecast"] as const),
+    /** The dashboard KPI tiles (`/analytics/summary`, Track R v1.4) — savings
+     * rate, committed monthly cost, and net-worth change, all for "now" (no
+     * `from`/`to` window to key on), so a single bare slot under the shared
+     * `["analytics"]` prefix. */
+    summary: () => ["analytics", "summary"] as const,
   },
 
   auditEvents: (filters: AuditEventFilters = {}) => ["audit-events", filters] as const,
