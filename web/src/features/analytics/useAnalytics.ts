@@ -34,10 +34,28 @@ export interface AnalyticsQueryOptions {
   range?: AnalyticsRange;
 }
 
+/**
+ * Options for the three Insights breakdowns whose endpoints understand the
+ * all-time flag (net-worth-composition, spending-by-category,
+ * spending-by-contact). `allTime` maps the selector's "All time" mode to
+ * `?all=true` — the server extends `from` back to the workspace's earliest
+ * activity — and, like `range`, rides in the query key so switching modes
+ * refetches. When set it wins outright: no `from`/`to` is sent (an explicit
+ * `from` would override `all` server-side).
+ */
+export interface AllTimeAnalyticsQueryOptions extends AnalyticsQueryOptions {
+  allTime?: boolean;
+}
+
 /** Appends the `from`/`to` query params for a selected window; a bare path
- * (server-defaulted range) when none is given. Kept here so every hook builds
- * its URL the same way. */
-function analyticsPath(endpoint: string, range?: AnalyticsRange): string {
+ * (server-defaulted range) when none is given; `?all=true` alone for the
+ * all-time mode (which beats any `range` — see `AllTimeAnalyticsQueryOptions`).
+ * Kept here (pure, exported for its unit tests) so every hook builds its URL
+ * the same way. */
+export function analyticsPath(endpoint: string, range?: AnalyticsRange, allTime?: boolean): string {
+  if (allTime) {
+    return `/analytics/${endpoint}?all=true`;
+  }
   if (!range) {
     return `/analytics/${endpoint}`;
   }
@@ -69,7 +87,7 @@ export interface ContactSpend {
   spend_minor: number;
 }
 
-/** Mirrors `NetWorthPoint` — one persisted daily snapshot value. */
+/** One month-end net-worth value for a currency (reconstructed on read, not persisted). */
 export interface NetWorthPoint {
   date: string;
   net_worth_minor: number;
@@ -134,9 +152,10 @@ export function selectCurrency<T>(data: PerCurrency<T> | undefined, currency: st
   return data?.[currency] ?? [];
 }
 
-/** Net-worth snapshot series for one currency (base currency by default),
- * oldest point first. Reading it lazily captures today's snapshot server-side
- * so the latest point is current. */
+/** Net-worth-over-time for one currency (base currency by default), oldest
+ * point first — reconstructed per month-end on the server from the workspace's
+ * dated balances/assets/holdings/loans (nothing persisted), so it matches the
+ * composition chart's totals. */
 export function useNetWorthSeries({ currency, range }: AnalyticsQueryOptions = {}) {
   const { base_currency } = usePreferences();
   const target = currency ?? base_currency;
@@ -150,14 +169,21 @@ export function useNetWorthSeries({ currency, range }: AnalyticsQueryOptions = {
 /** Monthly net-worth composition (cash / assets / investments / signed debts)
  * for one currency (base currency by default), oldest month first — the source
  * of the Insights stacked-area chart. Driven by the Insights period selector,
- * so the range rides in the query key and switching windows refetches. */
-export function useNetWorthComposition({ currency, range }: AnalyticsQueryOptions = {}) {
+ * so the window (a `range`, or the all-time mode) rides in the query key and
+ * switching refetches. */
+export function useNetWorthComposition({
+  currency,
+  range,
+  allTime,
+}: AllTimeAnalyticsQueryOptions = {}) {
   const { base_currency } = usePreferences();
   const target = currency ?? base_currency;
   return useQuery({
-    queryKey: qk.analytics.netWorthComposition(range),
+    queryKey: qk.analytics.netWorthComposition(range, allTime),
     queryFn: () =>
-      apiFetch<PerCurrency<CompositionPoint>>(analyticsPath("net-worth-composition", range)),
+      apiFetch<PerCurrency<CompositionPoint>>(
+        analyticsPath("net-worth-composition", range, allTime),
+      ),
     select: (data) => selectCurrency(data, target),
   });
 }
@@ -175,14 +201,19 @@ export function useCashflow({ currency, range }: AnalyticsQueryOptions = {}) {
 }
 
 /** Expense magnitude by category for one currency (base currency by default),
- * sorted by spend descending, with an "Uncategorized" bucket. */
-export function useSpendingByCategory({ currency, range }: AnalyticsQueryOptions = {}) {
+ * sorted by spend descending, with an "Uncategorized" bucket. Takes the
+ * Insights selector's window — a bounded `range`, or `allTime` (`?all=true`). */
+export function useSpendingByCategory({
+  currency,
+  range,
+  allTime,
+}: AllTimeAnalyticsQueryOptions = {}) {
   const { base_currency } = usePreferences();
   const target = currency ?? base_currency;
   return useQuery({
-    queryKey: qk.analytics.spendingByCategory(range),
+    queryKey: qk.analytics.spendingByCategory(range, allTime),
     queryFn: () =>
-      apiFetch<PerCurrency<CategorySpend>>(analyticsPath("spending-by-category", range)),
+      apiFetch<PerCurrency<CategorySpend>>(analyticsPath("spending-by-category", range, allTime)),
     select: (data) => selectCurrency(data, target),
   });
 }
@@ -190,12 +221,17 @@ export function useSpendingByCategory({ currency, range }: AnalyticsQueryOptions
 /** Expense magnitude by contact for one currency (base currency by default),
  * sorted by spend descending, with a "No contact" bucket (`contact_id: null`).
  * Mirrors `useSpendingByCategory` against `/analytics/spending-by-contact`. */
-export function useSpendingByContact({ currency, range }: AnalyticsQueryOptions = {}) {
+export function useSpendingByContact({
+  currency,
+  range,
+  allTime,
+}: AllTimeAnalyticsQueryOptions = {}) {
   const { base_currency } = usePreferences();
   const target = currency ?? base_currency;
   return useQuery({
-    queryKey: qk.analytics.spendingByContact(range),
-    queryFn: () => apiFetch<PerCurrency<ContactSpend>>(analyticsPath("spending-by-contact", range)),
+    queryKey: qk.analytics.spendingByContact(range, allTime),
+    queryFn: () =>
+      apiFetch<PerCurrency<ContactSpend>>(analyticsPath("spending-by-contact", range, allTime)),
     select: (data) => selectCurrency(data, target),
   });
 }

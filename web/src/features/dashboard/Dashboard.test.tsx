@@ -207,6 +207,7 @@ describe("Dashboard", () => {
           next_due: null,
           opened_on: null,
           description: null,
+          contact_id: null,
           is_demo: false,
           created_at: "2026-01-01T00:00:00Z",
           paid_total_minor: 300_000,

@@ -40,6 +40,12 @@ async def _sub(client, h, **overrides):
     return (await client.post("/api/v1/subscriptions", json=body, headers=h)).json()
 
 
+async def _contact(client, h, **overrides):
+    body = {"name": "Green Valley Market"}
+    body.update(overrides)
+    return (await client.post("/api/v1/contacts", json=body, headers=h)).json()
+
+
 # --------------------------------------------------------------------------- #
 # Pure cost normalization (module-level helpers, integer minor units, §4)
 # --------------------------------------------------------------------------- #
@@ -118,6 +124,19 @@ async def test_list_keyset_paginates(client, initialized_instance):
     assert len(second["items"]) == 1
     ids = {s["id"] for s in first["items"]} | {s["id"] for s in second["items"]}
     assert len(ids) == 3  # no overlap, no skips
+
+
+async def test_list_filters_by_contact_id(client, initialized_instance):
+    h = await _auth(client)
+    acme = await _contact(client, h, name="Acme")
+    other = await _contact(client, h, name="Other")
+    matching = await _sub(client, h, name="Acme sub", contact_id=acme["id"])
+    await _sub(client, h, name="Other sub", contact_id=other["id"])
+    await _sub(client, h, name="No contact")
+
+    lst = (await client.get(f"/api/v1/subscriptions?contact_id={acme['id']}", headers=h)).json()
+
+    assert [s["id"] for s in lst["items"]] == [matching["id"]]
 
 
 async def test_get_and_missing_subscription(client, initialized_instance):

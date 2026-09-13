@@ -147,12 +147,15 @@ class ScheduledTransactionService:
         workspace_id: uuid.UUID,
         *,
         is_active: bool | None = None,
+        contact_id: uuid.UUID | None = None,
         cursor: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> tuple[list[ScheduledTransaction], str | None]:
         stmt = scoped_select(ScheduledTransaction, workspace_id)
         if is_active is not None:
             stmt = stmt.where(ScheduledTransaction.is_active == is_active)
+        if contact_id is not None:
+            stmt = stmt.where(ScheduledTransaction.contact_id == contact_id)
         # Soonest-first: what is due next is what the user acts on next. The id
         # tiebreaker keeps a walk deterministic when several schedules share a
         # next_due (CONVENTIONS §6).

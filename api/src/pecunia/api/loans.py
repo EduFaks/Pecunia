@@ -20,6 +20,7 @@ from pecunia.services.loans import (
     TransactionIsTransferLegError,
     TransactionNotFoundError,
 )
+from pecunia.services.transactions import ContactNotFoundError
 
 router = APIRouter(
     prefix="/loans", tags=["loans"], dependencies=[Depends(require_initialized)]
@@ -39,6 +40,7 @@ class LoanIn(BaseModel):
     next_due: date | None = None
     opened_on: date | None = None
     description: str | None = None
+    contact_id: uuid.UUID | None = None
 
 
 class LoanUpdate(BaseModel):
@@ -52,6 +54,7 @@ class LoanUpdate(BaseModel):
     next_due: date | None = None
     opened_on: date | None = None
     description: str | None = None
+    contact_id: uuid.UUID | None = None
 
 
 class LoanOut(BaseModel):
@@ -66,6 +69,7 @@ class LoanOut(BaseModel):
     next_due: date | None
     opened_on: date | None
     description: str | None
+    contact_id: uuid.UUID | None
     is_demo: bool
     created_at: datetime
     paid_total_minor: int
@@ -87,6 +91,7 @@ class LoanOut(BaseModel):
             next_due=loan.next_due,
             opened_on=loan.opened_on,
             description=loan.description,
+            contact_id=loan.contact_id,
             is_demo=loan.is_demo,
             created_at=loan.created_at,
             paid_total_minor=paid_total_minor,
@@ -178,19 +183,23 @@ async def create_loan(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
 ) -> LoanOut:
     svc = LoanService(db)
-    loan = await svc.create(
-        wsctx.workspace_id,
-        name=body.name,
-        direction=body.direction,
-        principal_minor=body.principal_minor,
-        currency=body.currency,
-        interest_rate_bps=body.interest_rate_bps,
-        planned_payment_minor=body.planned_payment_minor,
-        payment_frequency=body.payment_frequency,
-        next_due=body.next_due,
-        opened_on=body.opened_on,
-        description=body.description,
-    )
+    try:
+        loan = await svc.create(
+            wsctx.workspace_id,
+            name=body.name,
+            direction=body.direction,
+            principal_minor=body.principal_minor,
+            currency=body.currency,
+            interest_rate_bps=body.interest_rate_bps,
+            planned_payment_minor=body.planned_payment_minor,
+            payment_frequency=body.payment_frequency,
+            next_due=body.next_due,
+            opened_on=body.opened_on,
+            description=body.description,
+            contact_id=body.contact_id,
+        )
+    except ContactNotFoundError:
+        raise HTTPException(status_code=404, detail="CONTACT_NOT_FOUND") from None
     await db.commit()
     return await _loan_out(svc, loan)
 
@@ -199,11 +208,14 @@ async def create_loan(
 async def list_loans(
     db: Annotated[AsyncSession, Depends(get_db)],
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+    contact_id: uuid.UUID | None = None,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> LoanPage:
     svc = LoanService(db)
-    items, next_cursor = await svc.list(wsctx.workspace_id, cursor=cursor, limit=limit)
+    items, next_cursor = await svc.list(
+        wsctx.workspace_id, contact_id=contact_id, cursor=cursor, limit=limit
+    )
     return LoanPage(
         items=[await _loan_out(svc, loan) for loan in items], next_cursor=next_cursor
     )
@@ -230,19 +242,23 @@ async def update_loan(
     svc = LoanService(db)
     loan = await _get_or_404(svc, wsctx.workspace_id, loan_id)
     fields = body.model_dump(exclude_unset=True)
-    loan = await svc.update(
-        loan,
-        name=fields.get("name"),
-        direction=fields.get("direction"),
-        principal_minor=fields.get("principal_minor"),
-        currency=fields.get("currency"),
-        interest_rate_bps=fields.get("interest_rate_bps", UNSET),
-        planned_payment_minor=fields.get("planned_payment_minor", UNSET),
-        payment_frequency=fields.get("payment_frequency", UNSET),
-        next_due=fields.get("next_due", UNSET),
-        opened_on=fields.get("opened_on", UNSET),
-        description=fields.get("description", UNSET),
-    )
+    try:
+        loan = await svc.update(
+            loan,
+            name=fields.get("name"),
+            direction=fields.get("direction"),
+            principal_minor=fields.get("principal_minor"),
+            currency=fields.get("currency"),
+            interest_rate_bps=fields.get("interest_rate_bps", UNSET),
+            planned_payment_minor=fields.get("planned_payment_minor", UNSET),
+            payment_frequency=fields.get("payment_frequency", UNSET),
+            next_due=fields.get("next_due", UNSET),
+            opened_on=fields.get("opened_on", UNSET),
+            description=fields.get("description", UNSET),
+            contact_id=fields.get("contact_id", UNSET),
+        )
+    except ContactNotFoundError:
+        raise HTTPException(status_code=404, detail="CONTACT_NOT_FOUND") from None
     await db.commit()
     return await _loan_out(svc, loan)
 

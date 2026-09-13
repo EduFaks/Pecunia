@@ -10,6 +10,7 @@ import TextField from "../../components/ui/TextField";
 import { ApiError } from "../../lib/api";
 import { amountToMinor, minorToAmountInput } from "../../lib/amount";
 import { cn } from "../../lib/cn";
+import ContactPicker from "../contacts/ContactPicker";
 import { CURRENCY_CODES } from "../setup/CurrencySelect";
 import { bpsToPctInput, pctToBps } from "./interest";
 import { useCreateLoan, useUpdateLoan } from "./useLoans";
@@ -58,8 +59,9 @@ function loanErrorMessage(error: unknown): string {
  * currency + principal (`amountToMinor`, unsigned — a principal is a plain
  * positive figure), an optional interest rate typed as a percent (converted
  * to/from `interest_rate_bps` via `interest.ts`, DISPLAY only), an optional
- * planned payment + frequency + next-due date, an opened-on date, and a
- * description. Used both as `LoansScreen`'s "New loan"/"Edit" panel and
+ * planned payment + frequency + next-due date, an opened-on date, a
+ * description, and an optional counterparty contact (`ContactPicker` →
+ * `contact_id`). Used both as `LoansScreen`'s "New loan"/"Edit" panel and
  * `LoanDetail`'s inline edit panel.
  */
 function LoanForm({ loan, defaultCurrency, onSuccess, onCancel }: LoanFormProps) {
@@ -84,6 +86,8 @@ function LoanForm({ loan, defaultCurrency, onSuccess, onCancel }: LoanFormProps)
   const [nextDue, setNextDue] = useState(loan?.next_due ?? "");
   const [openedOn, setOpenedOn] = useState(loan?.opened_on ?? "");
   const [description, setDescription] = useState(loan?.description ?? "");
+  // `""` is `ContactPicker`'s "no contact" sentinel (a real id is a UUID).
+  const [contactId, setContactId] = useState(loan?.contact_id ?? "");
 
   const [principalError, setPrincipalError] = useState<string | null>(null);
   const [plannedError, setPlannedError] = useState<string | null>(null);
@@ -138,6 +142,7 @@ function LoanForm({ loan, defaultCurrency, onSuccess, onCancel }: LoanFormProps)
           next_due: nextDue || null,
           opened_on: openedOn || null,
           description: description.trim() || null,
+          contact_id: contactId || null,
         });
         onSuccess(updated);
         return;
@@ -154,6 +159,7 @@ function LoanForm({ loan, defaultCurrency, onSuccess, onCancel }: LoanFormProps)
         ...(nextDue ? { next_due: nextDue } : {}),
         ...(openedOn ? { opened_on: openedOn } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
+        ...(contactId ? { contact_id: contactId } : {}),
       });
       onSuccess(created);
     } catch (err) {
@@ -196,6 +202,10 @@ function LoanForm({ loan, defaultCurrency, onSuccess, onCancel }: LoanFormProps)
           ))}
         </div>
       </div>
+
+      {/* The counterparty — who you borrowed from / lent to. Optional; the
+          picker's clear row ("No contact") maps back to a null contact_id. */}
+      <ContactPicker label="Contact" value={contactId} onChange={(id) => setContactId(id)} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Select

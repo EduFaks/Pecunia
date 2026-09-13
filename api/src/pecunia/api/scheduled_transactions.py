@@ -176,12 +176,13 @@ async def list_schedules(
     db: Annotated[AsyncSession, Depends(get_db)],
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
     is_active: bool | None = None,
+    contact_id: uuid.UUID | None = None,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> SchedulePage:
     svc = ScheduledTransactionService(db)
     items, next_cursor = await svc.list(
-        wsctx.workspace_id, is_active=is_active, cursor=cursor, limit=limit
+        wsctx.workspace_id, is_active=is_active, contact_id=contact_id, cursor=cursor, limit=limit
     )
     return SchedulePage(
         items=[ScheduledTransactionOut.from_model(s) for s in items], next_cursor=next_cursor

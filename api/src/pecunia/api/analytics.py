@@ -21,6 +21,7 @@ DEFAULT_MONTHS = 12
 
 FromDate = Annotated[date | None, Query(alias="from")]
 ToDate = Annotated[date | None, Query(alias="to")]
+AllTime = Annotated[bool, Query(alias="all")]
 
 
 def _today() -> date:
@@ -32,6 +33,28 @@ def _today() -> date:
 def _range(from_: date | None, to: date | None) -> tuple[date, date]:
     to_date = to or _today()
     from_date = from_ or shift_month(to_date, -(DEFAULT_MONTHS - 1))
+    return from_date, to_date
+
+
+async def _range_all(
+    svc: AnalyticsService,
+    workspace_id: uuid.UUID,
+    from_: date | None,
+    to: date | None,
+    all_: bool,
+) -> tuple[date, date]:
+    """Like `_range`, plus the Insights screens' "all time" option: when
+    `all_` is set and `from_` is not explicitly given, `from` extends back to
+    the workspace's `earliest_activity_date` instead of the rolling 12-month
+    default. An explicit `from` always wins over `all_` (an explicit bound is
+    a real request; `all_` only fills in the omitted default)."""
+    to_date = to or _today()
+    if from_ is not None:
+        from_date = from_
+    elif all_:
+        from_date = await svc.earliest_activity_date(workspace_id, today=_today())
+    else:
+        from_date = shift_month(to_date, -(DEFAULT_MONTHS - 1))
     return from_date, to_date
 
 
@@ -111,9 +134,11 @@ async def spending_by_category(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
     from_: FromDate = None,
     to: ToDate = None,
+    all_: AllTime = False,
 ) -> dict[str, list[CategorySpend]]:
-    from_date, to_date = _range(from_, to)
-    return await AnalyticsService(db).spending_by_category(
+    svc = AnalyticsService(db)
+    from_date, to_date = await _range_all(svc, wsctx.workspace_id, from_, to, all_)
+    return await svc.spending_by_category(
         wsctx.workspace_id, from_date=from_date, to_date=to_date
     )
 
@@ -124,9 +149,11 @@ async def spending_by_contact(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
     from_: FromDate = None,
     to: ToDate = None,
+    all_: AllTime = False,
 ) -> dict[str, list[ContactSpend]]:
-    from_date, to_date = _range(from_, to)
-    return await AnalyticsService(db).spending_by_contact(
+    svc = AnalyticsService(db)
+    from_date, to_date = await _range_all(svc, wsctx.workspace_id, from_, to, all_)
+    return await svc.spending_by_contact(
         wsctx.workspace_id, from_date=from_date, to_date=to_date
     )
 
@@ -139,12 +166,11 @@ async def net_worth(
     to: ToDate = None,
 ) -> dict[str, list[NetWorthPoint]]:
     from_date, to_date = _range(from_, to)
-    result = await AnalyticsService(db).net_worth_series(
-        wsctx.workspace_id, from_date=from_date, to_date=to_date, today=_today()
+    # A pure read (net_worth_series reconstructs every point on the fly, same
+    # as net_worth_composition) — no commit needed.
+    return await AnalyticsService(db).net_worth_series(
+        wsctx.workspace_id, from_date=from_date, to_date=to_date
     )
-    # net_worth_series refreshes today's snapshot on read — the router owns commit.
-    await db.commit()
-    return result
 
 
 @router.get("/net-worth-composition")
@@ -153,11 +179,13 @@ async def net_worth_composition(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
     from_: FromDate = None,
     to: ToDate = None,
+    all_: AllTime = False,
 ) -> dict[str, list[CompositionPoint]]:
-    from_date, to_date = _range(from_, to)
+    svc = AnalyticsService(db)
+    from_date, to_date = await _range_all(svc, wsctx.workspace_id, from_, to, all_)
     # A pure read (components are reconstructed on the fly, nothing captured), so
-    # no commit — unlike /net-worth which refreshes today's snapshot.
-    return await AnalyticsService(db).net_worth_composition(
+    # no commit.
+    return await svc.net_worth_composition(
         wsctx.workspace_id, from_date=from_date, to_date=to_date
     )
 

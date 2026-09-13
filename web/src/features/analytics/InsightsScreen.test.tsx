@@ -220,6 +220,54 @@ describe("InsightsScreen", () => {
     });
   });
 
+  it("widens the queried window when the period selector switches to 24 months", async () => {
+    mockEndpoints({
+      spendingByContact: { USD: [{ contact_id: "p1", name: "Landlord", spend_minor: 50000 }] },
+    });
+
+    renderScreen();
+
+    await screen.findByRole("list", { name: /spending by contact/i });
+    const initialFrom = fromParamsFor("/analytics/spending-by-contact").at(-1) ?? "";
+    expect(initialFrom).not.toBe(""); // the default 12-month window sends a `from`
+
+    fireEvent.click(screen.getByRole("button", { name: "24 months" }));
+
+    // A new fetch fires for the wider window: an earlier `from`.
+    await waitFor(() => {
+      const froms = fromParamsFor("/analytics/spending-by-contact");
+      expect(froms.length).toBeGreaterThan(1);
+      expect(froms.at(-1)! < initialFrom).toBe(true);
+    });
+  });
+
+  it("switches every breakdown to all=true (no from) when All time is selected", async () => {
+    mockEndpoints({
+      spendingByContact: { USD: [{ contact_id: "p1", name: "Landlord", spend_minor: 50000 }] },
+    });
+
+    renderScreen();
+    await screen.findByRole("list", { name: /spending by contact/i });
+
+    fireEvent.click(screen.getByRole("button", { name: "All time" }));
+
+    await waitFor(() => {
+      for (const endpoint of [
+        "/analytics/net-worth-composition",
+        "/analytics/spending-by-contact",
+        "/analytics/spending-by-category",
+      ]) {
+        const latest = mockApiFetch.mock.calls
+          .map(([path]) => path as string)
+          .filter((path) => path.startsWith(endpoint))
+          .at(-1)!;
+        const params = new URL(latest, "http://x").searchParams;
+        expect(params.get("all")).toBe("true");
+        expect(params.get("from")).toBeNull();
+      }
+    });
+  });
+
   it("renders a project-spend summary from the projects list, ranked by realized actual", async () => {
     mockEndpoints({
       projects: [

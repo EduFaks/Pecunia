@@ -4,11 +4,12 @@ from datetime import date, timedelta
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pecunia.models.asset import AssetValuation
 from pecunia.models.budget import Budget
 from pecunia.models.category import Category
 from pecunia.models.contact import Contact
-from pecunia.models.loan import Loan
-from pecunia.models.net_worth_snapshot import NetWorthSnapshot
+from pecunia.models.loan import Loan, LoanPayment
+from pecunia.models.portfolio import HoldingPrice
 from pecunia.models.scheduled_transaction import ScheduledTransaction
 from pecunia.models.subscription import Subscription
 from pecunia.models.transaction import Transaction
@@ -33,10 +34,13 @@ class AnalyticsService:
     currencies are NEVER summed together (CONVENTIONS §4). Income/spend always
     exclude soft-deleted transactions and transfer legs.
 
-    Contract: the aggregation methods are pure reads. `net_worth_series`
-    refreshes today's snapshot on read (a write via SnapshotService, which
-    flushes) — the caller (router) still owns commit. Clock-free: `today` is
-    passed in (§4)."""
+    Contract: every method here is a pure read — nothing is written, so the
+    caller never needs to commit after calling into this service.
+    `net_worth_series` and `net_worth_composition` both reconstruct their
+    points on the fly from dated data (accounts/transactions, asset
+    valuations, holding prices, loan payments) rather than reading the
+    persisted `net_worth_snapshots` table, so neither depends on a snapshot
+    ever having been captured. Clock-free: dates are passed in (§4)."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -259,41 +263,69 @@ class AnalyticsService:
         return result
 
     async def net_worth_series(
-        self, workspace_id: uuid.UUID, *, from_date: date, to_date: date, today: date
+        self, workspace_id: uuid.UUID, *, from_date: date, to_date: date
     ) -> dict[str, list[dict]]:
-        """Per-currency net-worth series over [from_date, to_date] read from the
-        persisted snapshots. Today's snapshot is (re)captured on every read so
-        the latest point always reflects current state — same-day activity and
-        newly-added currencies included; capture is an idempotent per-currency
-        upsert, so this refreshes today's figure rather than duplicating it (a
-        second read does not add a row). `{currency: [{date, net_worth_minor},
-        ...]}`, ordered oldest first. Clock-free: `today` is a parameter."""
-        snapshots = SnapshotService(self.db)
-        # Refresh today unconditionally: a same-day transaction, price, payment,
-        # or a brand-new-currency account must move the latest point, which a
-        # "capture only if today has no snapshot" guard would leave stale. The
-        # upsert keeps it idempotent (per (workspace, currency, captured_on)).
-        await snapshots.capture(workspace_id, today)
+        """Per-currency net-worth series over [from_date, to_date], RECONSTRUCTED
+        at one point per month — exactly the same month axis and reconstruction
+        `net_worth_composition` uses (`SnapshotService.net_worth_as_of`, the sum
+        of that method's four components), just collapsed to the one headline
+        figure instead of kept as separate parts. This means the series draws
+        real history for a workspace with dated assets/loans/prices but few or
+        no persisted snapshots — it no longer depends on `net_worth_snapshots`
+        ever having been captured (that table and `SnapshotService.capture`/
+        `backfill` still exist and are still written elsewhere; this method
+        just no longer reads or writes them).
 
-        currencies = (
-            await self.db.execute(
-                scoped_select(NetWorthSnapshot, workspace_id)
-                .with_only_columns(NetWorthSnapshot.currency)
-                .where(
-                    NetWorthSnapshot.captured_on >= from_date,
-                    NetWorthSnapshot.captured_on <= to_date,
-                )
-                .distinct()
-            )
-        ).scalars().all()
+        Returns `{currency: [{date, net_worth_minor}, ...]}`, oldest first —
+        same shape/keys the frontend already reads. The month axis matches
+        `net_worth_composition`: the month-end of each month in the window,
+        with the final month clamped to `to_date` itself. Every currency with
+        any activity gets the full, continuous axis (0 at a point with no
+        activity yet). Currencies are never summed together (§4). A pure
+        read — unlike the old snapshot-capturing version, this never writes,
+        so the caller need not commit. Clock-free: the window is passed in."""
+        snapshots = SnapshotService(self.db)
+        point_dates = [min(month_end(m), to_date) for m in month_starts(from_date, to_date)]
+
+        by_currency: dict[str, dict[date, int]] = {}
+        for on_date in point_dates:
+            for currency, net_worth_minor in (
+                await snapshots.net_worth_as_of(workspace_id, on_date)
+            ).items():
+                by_currency.setdefault(currency, {})[on_date] = net_worth_minor
 
         result: dict[str, list[dict]] = {}
-        for currency in currencies:
-            points = await snapshots.series(
-                workspace_id, currency, from_date=from_date, to_date=to_date
-            )
-            result[currency] = [{"date": d, "net_worth_minor": v} for d, v in points]
+        for currency, by_date in by_currency.items():
+            result[currency] = [
+                {"date": d, "net_worth_minor": by_date.get(d, 0)} for d in point_dates
+            ]
         return result
+
+    async def earliest_activity_date(self, workspace_id: uuid.UUID, *, today: date) -> date:
+        """The earliest dated activity anywhere in this workspace's finance
+        data — the `from` bound for an "all time" Insights range (`all=true`
+        on net-worth-composition/spending-by-category/spending-by-contact).
+        The minimum across `transactions.occurred_on`, `asset_valuations.as_of`,
+        `holding_prices.as_of`, `loan_payments.paid_on`, `loans.opened_on`, and
+        `subscriptions.started_on` — whichever of those exist for this
+        workspace. Falls back to `today` when the workspace has none of them
+        (an empty/brand-new workspace has no history to extend to). Clock-free:
+        `today` is passed in (§4)."""
+        candidates: list[date] = []
+        for model, column in (
+            (Transaction, Transaction.occurred_on),
+            (AssetValuation, AssetValuation.as_of),
+            (HoldingPrice, HoldingPrice.as_of),
+            (LoanPayment, LoanPayment.paid_on),
+            (Loan, Loan.opened_on),
+            (Subscription, Subscription.started_on),
+        ):
+            earliest = await self.db.scalar(
+                scoped_select(model, workspace_id).with_only_columns(sa.func.min(column))
+            )
+            if earliest is not None:
+                candidates.append(earliest)
+        return min(candidates) if candidates else today
 
     async def net_worth_composition(
         self, workspace_id: uuid.UUID, *, from_date: date, to_date: date

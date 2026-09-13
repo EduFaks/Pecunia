@@ -28,7 +28,15 @@ describe("computePeriodRange", () => {
     expect(range.from).toBe("2026-02-28");
   });
 
-  it("offers 3-, 6-, and 12-month options", () => {
-    expect(PERIOD_OPTIONS.map((option) => option.months)).toEqual([3, 6, 12]);
+  it("offers 3-, 6-, 12-, and 24-month options, narrowest first", () => {
+    expect(PERIOD_OPTIONS.map((option) => option.months)).toEqual([3, 6, 12, 24]);
+  });
+
+  it("reaches a full two years back for the 24-month window", () => {
+    const today = new Date("2026-09-12T00:00:00.000Z");
+    const twentyFour = computePeriodRange(24, today);
+    const twelve = computePeriodRange(12, today);
+    expect(twentyFour.from).toBe("2024-09-12");
+    expect(twentyFour.from < twelve.from).toBe(true); // wider window starts earlier
   });
 });

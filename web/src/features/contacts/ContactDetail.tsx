@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import DataList from "../../components/data/DataList";
 import EmptyState from "../../components/data/EmptyState";
 import Avatar from "../../components/ui/Avatar";
@@ -10,8 +11,10 @@ import Card from "../../components/ui/Card";
 import Pill from "../../components/ui/Pill";
 import Spinner from "../../components/ui/Spinner";
 import { useToast } from "../../components/ui/Toast";
+import { focusRingClass } from "../../components/ui/a11y";
 import type { DonutDatum } from "../../components/charts/chartMath";
 import { apiFetch } from "../../lib/api";
+import { cn } from "../../lib/cn";
 import { DateText, MoneyText, usePreferences } from "../../lib/preferences";
 import { qk } from "../../lib/queries";
 import { CategoryChart } from "../analytics/CategoryChart";
@@ -20,6 +23,9 @@ import { PeriodSelector } from "../analytics/PeriodSelector";
 import { DEFAULT_PERIOD_MONTHS, computePeriodRange } from "../analytics/period";
 import CategoryBadge from "../categories/CategoryBadge";
 import { useCategories } from "../categories/useCategories";
+import type { LoanDirection, LoanPage } from "../loans/useLoans";
+import type { ScheduleFrequency, SchedulePage } from "../planned/usePlanned";
+import type { SubscriptionPage } from "../subscriptions/useSubscriptions";
 import type { TransactionOut } from "../transactions/useTransactions";
 import ContactForm from "./ContactForm";
 import { useArchiveContact, useContact, useContactOverview } from "./useContacts";
@@ -33,19 +39,40 @@ interface TransactionPage {
 /** One walked page's size for this contact's transactions `DataList`. */
 const PAGE_LIMIT = 20;
 
+/** Bounded first-page size for the compact linked-item sections below
+ * (planned / subscriptions / loans) — a contact links to a handful of each at
+ * most, so one generous page covers them all (the `useContacts` bounded-read
+ * rationale, scaled to a per-contact subset). */
+const LINKED_LIMIT = 50;
+
 const TYPE_LABEL: Record<ContactOut["type"], string> = {
   person: "Person",
   company: "Company",
+};
+
+const SCHEDULE_FREQUENCY_LABEL: Record<ScheduleFrequency, string> = {
+  weekly: "Weekly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  yearly: "Yearly",
+};
+
+const LOAN_DIRECTION_LABEL: Record<LoanDirection, string> = {
+  borrowed: "Borrowed",
+  lent: "Lent",
 };
 
 /**
  * `/contacts/:id` — one contact's overview: a header (`Avatar`, name, person/
  * company, its default category, Edit + Archive), then a period-scoped read of
  * the money moving with this contact — money in / out / net and a transaction
- * count, a by-category breakdown, and a keyset-paginated list of this contact's
- * recent transactions.
+ * count, a by-category breakdown, compact sections for the contact's linked
+ * planned schedules / subscriptions / loans (each fetched by `?contact_id=`,
+ * hidden when empty), and a keyset-paginated list of this contact's recent
+ * transactions.
  *
- * The shared Insights period selector (3 / 6 / 12 months) drives the
+ * The shared Insights period selector (3 / 6 / 12 / 24 months — All time is
+ * off here, the overview endpoint has no all-time read) drives the
  * `{ from, to }` window `useContactOverview` reads (the range rides in the
  * query key, so switching refetches). Figures are per-currency and never summed
  * across currencies (§4): the base currency is shown when it has activity, else
@@ -71,6 +98,28 @@ function ContactDetail() {
   const contactQuery = useContact(id);
   const overviewQuery = useContactOverview(id, range);
   const archiveContact = useArchiveContact();
+
+  // The contact's linked planned schedules / subscriptions / loans — compact
+  // bounded reads filtered by `?contact_id=` (the same one-page `apiFetch`
+  // move as the recent-transactions list below). Each rides under its
+  // resource's `qk` prefix, so the owning screens' mutations invalidate these
+  // sections too. A section renders only when it has items.
+  const plannedQuery = useQuery({
+    queryKey: [...qk.planned, "by-contact", id ?? ""],
+    queryFn: () => apiFetch<SchedulePage>(`/planned?contact_id=${id}&limit=${LINKED_LIMIT}`),
+    enabled: id !== undefined,
+  });
+  const subscriptionsQuery = useQuery({
+    queryKey: [...qk.subscriptions, "by-contact", id ?? ""],
+    queryFn: () =>
+      apiFetch<SubscriptionPage>(`/subscriptions?contact_id=${id}&limit=${LINKED_LIMIT}`),
+    enabled: id !== undefined,
+  });
+  const loansQuery = useQuery({
+    queryKey: [...qk.loans, "by-contact", id ?? ""],
+    queryFn: () => apiFetch<LoanPage>(`/loans?contact_id=${id}&limit=${LINKED_LIMIT}`),
+    enabled: id !== undefined,
+  });
 
   // Archived categories included so a contact whose default category (or a
   // transaction's category) was later archived still resolves its badge — same
@@ -133,6 +182,10 @@ function ContactDetail() {
     }));
   const receivedRows = (figures?.by_category ?? []).filter((row) => row.in_minor > 0);
 
+  const plannedItems = plannedQuery.data?.items ?? [];
+  const subscriptionItems = subscriptionsQuery.data?.items ?? [];
+  const loanItems = loansQuery.data?.items ?? [];
+
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -182,7 +235,17 @@ function ContactDetail() {
 
       <div className="flex items-center justify-between gap-4">
         <h2 className="font-display text-lg text-ink">Overview</h2>
-        <PeriodSelector months={months} onChange={setMonths} />
+        {/* Months-only: the overview endpoint always takes a bounded
+            `{ from, to }` (no `all=` read), so the All-time option is off. */}
+        <PeriodSelector
+          value={{ kind: "months", months }}
+          onChange={(selection) => {
+            if (selection.kind === "months") {
+              setMonths(selection.months);
+            }
+          }}
+          includeAllTime={false}
+        />
       </div>
 
       {overviewQuery.isError ? (
@@ -248,6 +311,74 @@ function ContactDetail() {
         </>
       )}
 
+      {plannedItems.length > 0 ? (
+        <LinkedSection title="Planned">
+          {plannedItems.map((schedule) => (
+            <li key={schedule.id}>
+              <Link
+                to="/planned"
+                className={cn("flex items-center justify-between gap-4 py-3", focusRingClass)}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-ink">{schedule.description}</p>
+                  <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
+                    {SCHEDULE_FREQUENCY_LABEL[schedule.frequency]} · Next{" "}
+                    <DateText iso={schedule.next_due} />
+                  </p>
+                </div>
+                <MoneyText minor={schedule.amount_minor} currency={schedule.currency} colorBySign />
+              </Link>
+            </li>
+          ))}
+        </LinkedSection>
+      ) : null}
+
+      {subscriptionItems.length > 0 ? (
+        <LinkedSection title="Subscriptions">
+          {subscriptionItems.map((subscription) => (
+            <li key={subscription.id}>
+              <Link
+                to="/subscriptions"
+                className={cn("flex items-center justify-between gap-4 py-3", focusRingClass)}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-ink">{subscription.name}</p>
+                  <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
+                    Renews <DateText iso={subscription.next_renewal} />
+                  </p>
+                </div>
+                <span className="shrink-0 text-sm">
+                  <MoneyText minor={subscription.monthly_minor} currency={subscription.currency} />
+                  <span className="text-ink-faint"> / mo</span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </LinkedSection>
+      ) : null}
+
+      {loanItems.length > 0 ? (
+        <LinkedSection title="Loans">
+          {loanItems.map((loan) => (
+            <li key={loan.id}>
+              <Link
+                to={`/loans/${loan.id}`}
+                className={cn("flex items-center justify-between gap-4 py-3", focusRingClass)}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="truncate text-sm text-ink">{loan.name}</p>
+                  <Pill>{LOAN_DIRECTION_LABEL[loan.direction]}</Pill>
+                </div>
+                <span className="shrink-0 text-sm">
+                  <MoneyText minor={loan.remaining_minor} currency={loan.currency} />
+                  <span className="text-ink-faint"> remaining</span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </LinkedSection>
+      ) : null}
+
       <div>
         <h2 className="font-display text-lg text-ink">Recent transactions</h2>
         <DataList<TransactionOut>
@@ -275,6 +406,22 @@ function ContactDetail() {
         />
       </div>
     </div>
+  );
+}
+
+/** One compact linked-items section (Planned / Subscriptions / Loans): a
+ * heading over a bordered row list, each row a `Link` to the owning screen.
+ * Rendered only when the section has items — the caller hides empties, so a
+ * contact with no linked schedules/subscriptions/loans adds no dead panels
+ * under its overview. */
+function LinkedSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h2 className="font-display text-lg text-ink">{title}</h2>
+      <ul className="mt-4 divide-y divide-hairline rounded-pc-lg border border-hairline bg-surface-1 px-4">
+        {children}
+      </ul>
+    </section>
   );
 }
 

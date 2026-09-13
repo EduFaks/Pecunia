@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import sqlalchemy as sa
 
@@ -10,8 +11,12 @@ from pecunia.models import (
     Budget,
     Category,
     Contact,
+    Holding,
+    HoldingPrice,
     Loan,
+    LoanPayment,
     NetWorthSnapshot,
+    Portfolio,
     ScheduledTransaction,
     Subscription,
     Transaction,
@@ -250,51 +255,6 @@ async def test_spending_by_contact_groups_sorted_with_no_contact(db, initialized
 # -------------------------------------------------------------- net worth series
 
 
-async def test_net_worth_series_captures_today_on_read(db, initialized_instance):
-    ws_id = await _ws_id(db, initialized_instance)
-    acc = await _account(db, ws_id, currency="USD", initial=100_000)
-    await _tx(db, ws_id, acc, amount=10_000, on=date(2026, 1, 15))
-    today = date(2026, 9, 12)
-
-    # no snapshots exist yet
-    assert await db.scalar(sa.select(sa.func.count()).select_from(NetWorthSnapshot)) == 0
-
-    result = await AnalyticsService(db).net_worth_series(
-        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 9, 30), today=today
-    )
-
-    # a snapshot for `today` was captured on read
-    row = await db.scalar(
-        sa.select(NetWorthSnapshot).where(
-            NetWorthSnapshot.workspace_id == ws_id,
-            NetWorthSnapshot.currency == "USD",
-            NetWorthSnapshot.captured_on == today,
-        )
-    )
-    assert row is not None
-    assert row.net_worth_minor == 110_000
-    # and it comes back in the series
-    assert result["USD"][-1] == {"date": today, "net_worth_minor": 110_000}
-
-
-async def test_net_worth_series_returns_prior_points_and_is_per_currency(db, initialized_instance):
-    ws_id = await _ws_id(db, initialized_instance)
-    usd = await _account(db, ws_id, currency="USD", initial=100_000)
-    await _tx(db, ws_id, usd, amount=10_000, on=date(2026, 1, 15))
-    eur_asset = await _asset_with_valuation(db, ws_id)
-    today = date(2026, 9, 12)
-    svc = AnalyticsService(db)
-
-    result = await svc.net_worth_series(
-        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 9, 30), today=today
-    )
-
-    assert set(result) == {"USD", "EUR"}
-    assert result["USD"] == [{"date": today, "net_worth_minor": 110_000}]
-    assert result["EUR"] == [{"date": today, "net_worth_minor": 40_000}]
-    assert eur_asset  # referenced
-
-
 async def _asset_with_valuation(db, ws_id):
     asset = Asset(id=uuid.uuid4(), workspace_id=ws_id, name="Y", type="other", currency="EUR")
     db.add(asset)
@@ -307,57 +267,105 @@ async def _asset_with_valuation(db, ws_id):
     return asset
 
 
-async def test_net_worth_series_does_not_duplicate_existing_today(db, initialized_instance):
-    from pecunia.services.snapshots import SnapshotService
+async def test_net_worth_series_reconstructs_history_from_dated_asset_no_transactions(
+    db, initialized_instance
+):
+    """The bug fix: a workspace with NO transactions and no persisted
+    snapshots, but a dated asset valuation from a prior month, must still show
+    that history on the series — not an empty/flat line. Reconstructed exactly
+    like net_worth_composition (SnapshotService.net_worth_as_of per month)."""
+    ws_id = await _ws_id(db, initialized_instance)
+    assert await db.scalar(sa.select(sa.func.count()).select_from(NetWorthSnapshot)) == 0
+    asset = Asset(id=uuid.uuid4(), workspace_id=ws_id, name="Watch", type="watch", currency="USD")
+    db.add(asset)
+    await db.flush()
+    db.add(AssetValuation(
+        id=uuid.uuid4(), workspace_id=ws_id, asset_id=asset.id,
+        value_minor=50_000, as_of=date(2026, 3, 10),
+    ))
+    await db.flush()
 
+    result = await AnalyticsService(db).net_worth_series(
+        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 4, 30)
+    )
+
+    # never captured — this reconstruction doesn't touch net_worth_snapshots
+    assert await db.scalar(sa.select(sa.func.count()).select_from(NetWorthSnapshot)) == 0
+    usd = result["USD"]
+    assert [r["date"] for r in usd] == [
+        date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30),
+    ]
+    # before the valuation: 0, not flat/empty; from the valuation month on: 50_000
+    assert [r["net_worth_minor"] for r in usd] == [0, 0, 50_000, 50_000]
+
+
+async def test_net_worth_series_reconstructs_history_from_dated_loan_no_transactions(
+    db, initialized_instance
+):
+    """Same bug, a loan this time: a borrowed loan opened in a prior month (no
+    transactions at all) must show up as a negative net-worth history point
+    from that month on."""
+    ws_id = await _ws_id(db, initialized_instance)
+    await _loan(db, ws_id, direction="borrowed", principal=30_000)
+
+    result = await AnalyticsService(db).net_worth_series(
+        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 2, 28)
+    )
+
+    assert result["USD"] == [
+        {"date": date(2026, 1, 31), "net_worth_minor": -30_000},
+        {"date": date(2026, 2, 28), "net_worth_minor": -30_000},
+    ]
+
+
+async def test_net_worth_series_matches_composition_totals(db, initialized_instance):
+    """Each series point is the sum of the same month's composition parts —
+    the two endpoints can never drift apart."""
     ws_id = await _ws_id(db, initialized_instance)
     acc = await _account(db, ws_id, currency="USD", initial=100_000)
     await _tx(db, ws_id, acc, amount=10_000, on=date(2026, 1, 15))
-    today = date(2026, 9, 12)
-    await SnapshotService(db).capture(ws_id, today)  # today already snapshotted
-
-    await AnalyticsService(db).net_worth_series(
-        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 9, 30), today=today
-    )
-
-    count = await db.scalar(
-        sa.select(sa.func.count()).select_from(NetWorthSnapshot).where(
-            NetWorthSnapshot.captured_on == today, NetWorthSnapshot.currency == "USD"
-        )
-    )
-    assert count == 1
-
-
-async def test_net_worth_series_refreshes_today_on_reread(db, initialized_instance):
-    """Reading refreshes today's snapshot every time, so same-day activity added
-    AFTER a first read shows up on the latest point on the next read — the
-    snapshot is refreshed, never left stale (the deferred-polish fix)."""
-    ws_id = await _ws_id(db, initialized_instance)
-    acc = await _account(db, ws_id, currency="USD", initial=100_000)
-    today = date(2026, 9, 12)
+    asset = Asset(id=uuid.uuid4(), workspace_id=ws_id, name="X", type="other", currency="USD")
+    db.add(asset)
+    await db.flush()
+    db.add(AssetValuation(
+        id=uuid.uuid4(), workspace_id=ws_id, asset_id=asset.id,
+        value_minor=5_000, as_of=date(2026, 3, 10),
+    ))
+    await db.flush()
+    await _loan(db, ws_id, direction="borrowed", principal=20_000)
     svc = AnalyticsService(db)
+    window = {"from_date": date(2026, 1, 1), "to_date": date(2026, 4, 30)}
 
-    first = await svc.net_worth_series(
-        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 9, 30), today=today
+    series = await svc.net_worth_series(ws_id, **window)
+    composition = await svc.net_worth_composition(ws_id, **window)
+
+    assert [p["date"] for p in series["USD"]] == [c["period_start"] for c in composition["USD"]]
+    for point, parts in zip(series["USD"], composition["USD"], strict=True):
+        total = parts["cash_minor"] + parts["assets_minor"] + parts["investments_minor"] + parts["debts_minor"]
+        assert point["net_worth_minor"] == total
+
+
+async def test_net_worth_series_per_currency_and_workspace_scoped(
+    db, initialized_instance, user_factory
+):
+    ws_id = await _ws_id(db, initialized_instance)
+    usd = await _account(db, ws_id, currency="USD", initial=100_000)
+    await _tx(db, ws_id, usd, amount=10_000, on=date(2026, 1, 15))
+    eur_asset = await _asset_with_valuation(db, ws_id)  # EUR 40_000 as_of 2026-04-01
+
+    other_ws = await _other_workspace(db, user_factory)
+    other_acc = await _account(db, other_ws.id, currency="USD", initial=999_000)
+
+    result = await AnalyticsService(db).net_worth_series(
+        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 4, 30)
     )
-    assert first["USD"][-1] == {"date": today, "net_worth_minor": 100_000}
 
-    # same-day activity recorded AFTER the first read
-    await _tx(db, ws_id, acc, amount=25_000, on=today)
-
-    second = await svc.net_worth_series(
-        ws_id, from_date=date(2026, 1, 1), to_date=date(2026, 9, 30), today=today
-    )
-
-    # today's point reflects the new activity (not the stale 100_000), and it is
-    # still a single row for the day (idempotent per-currency upsert).
-    assert second["USD"][-1] == {"date": today, "net_worth_minor": 125_000}
-    count = await db.scalar(
-        sa.select(sa.func.count()).select_from(NetWorthSnapshot).where(
-            NetWorthSnapshot.captured_on == today, NetWorthSnapshot.currency == "USD"
-        )
-    )
-    assert count == 1
+    assert set(result) == {"USD", "EUR"}
+    assert all(p["net_worth_minor"] == 110_000 for p in result["USD"])  # not 1_109_000
+    eur = result["EUR"]
+    assert eur[0]["net_worth_minor"] == 0  # before 2026-04-01
+    assert eur[-1]["net_worth_minor"] == 40_000  # on/after 2026-04-01
+    assert eur_asset and other_acc  # referenced
 
 
 # -------------------------------------------------------- net worth composition
@@ -439,6 +447,127 @@ async def test_net_worth_composition_per_currency_and_workspace_scoped(
     assert eur_asset
 
 
+# ------------------------------------------------ earliest activity / all-time range
+
+
+async def test_earliest_activity_date_min_across_sources(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD")
+    await _tx(db, ws_id, acc, amount=1_000, on=date(2025, 6, 1))
+
+    asset = Asset(id=uuid.uuid4(), workspace_id=ws_id, name="A", type="other", currency="USD")
+    db.add(asset)
+    await db.flush()
+    db.add(AssetValuation(
+        id=uuid.uuid4(), workspace_id=ws_id, asset_id=asset.id,
+        value_minor=1_000, as_of=date(2024, 3, 1),
+    ))
+
+    portfolio = Portfolio(id=uuid.uuid4(), workspace_id=ws_id, name="P", currency="USD")
+    db.add(portfolio)
+    await db.flush()
+    holding = Holding(
+        id=uuid.uuid4(), workspace_id=ws_id, portfolio_id=portfolio.id,
+        name="H", quantity=Decimal(1),
+    )
+    db.add(holding)
+    await db.flush()
+    db.add(HoldingPrice(
+        id=uuid.uuid4(), workspace_id=ws_id, holding_id=holding.id,
+        unit_price_minor=100, as_of=date(2024, 6, 1),
+    ))
+
+    loan = await _loan(db, ws_id, direction="borrowed", principal=5_000)
+    loan.opened_on = date(2023, 5, 1)  # the earliest of all the sources here
+    db.add(LoanPayment(
+        id=uuid.uuid4(), workspace_id=ws_id, loan_id=loan.id,
+        amount_minor=100, paid_on=date(2025, 1, 1),
+    ))
+
+    db.add(Subscription(
+        id=uuid.uuid4(), workspace_id=ws_id, name="Netflix", amount_minor=1_000, currency="USD",
+        billing_frequency="monthly", next_renewal=date(2026, 10, 1), started_on=date(2024, 1, 1),
+    ))
+    await db.flush()
+
+    result = await AnalyticsService(db).earliest_activity_date(ws_id, today=date(2026, 9, 13))
+    assert result == date(2023, 5, 1)
+
+
+async def test_earliest_activity_date_falls_back_to_today_when_empty(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    result = await AnalyticsService(db).earliest_activity_date(ws_id, today=date(2026, 9, 13))
+    assert result == date(2026, 9, 13)
+
+
+async def test_earliest_activity_date_is_workspace_scoped(db, initialized_instance, user_factory):
+    ws_id = await _ws_id(db, initialized_instance)
+    other_ws = await _other_workspace(db, user_factory)
+    other_acc = await _account(db, other_ws.id, currency="USD")
+    await _tx(db, other_ws.id, other_acc, amount=1_000, on=date(2020, 1, 1))
+
+    result = await AnalyticsService(db).earliest_activity_date(ws_id, today=date(2026, 9, 13))
+    assert result == date(2026, 9, 13)  # the other workspace's ancient tx must not leak in
+    assert other_acc
+
+
+async def test_all_true_extends_spending_by_category_to_earliest_activity(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD")
+    cat = await _category(db, ws_id, name="AnOld", color="#22d3ee")
+    old_date = date(2024, 10, 5)  # well outside the rolling 12-month default ending 2026-09-30
+    await _tx(db, ws_id, acc, amount=-1_000, on=old_date, category_id=cat.id)
+    await db.commit()
+    h = await _auth(client)
+
+    default_resp = await client.get(
+        "/api/v1/analytics/spending-by-category", params={"to": "2026-09-30"}, headers=h,
+    )
+    all_resp = await client.get(
+        "/api/v1/analytics/spending-by-category",
+        params={"to": "2026-09-30", "all": "true"}, headers=h,
+    )
+
+    assert default_resp.status_code == all_resp.status_code == 200
+    assert default_resp.json() == {}  # the old expense falls outside the default window
+    assert all_resp.json()["USD"] == [
+        {"category_id": str(cat.id), "name": "AnOld", "color": "#22d3ee", "spend_minor": 1_000}
+    ]
+
+
+async def test_all_true_extends_composition_range_to_earliest_activity(client, db, initialized_instance):
+    """A valuation ~20 months before `to` is invisible on the rolling 12-month
+    default axis (it never reaches back that far) but the composition's
+    month axis extends all the way to it once `all=true` is set."""
+    ws_id = await _ws_id(db, initialized_instance)
+    asset = Asset(id=uuid.uuid4(), workspace_id=ws_id, name="Old asset", type="other", currency="USD")
+    db.add(asset)
+    await db.flush()
+    old_valuation = date(2024, 12, 15)
+    db.add(AssetValuation(
+        id=uuid.uuid4(), workspace_id=ws_id, asset_id=asset.id,
+        value_minor=5_000, as_of=old_valuation,
+    ))
+    await db.commit()
+    h = await _auth(client)
+
+    default_resp = await client.get(
+        "/api/v1/analytics/net-worth-composition", params={"to": "2026-09-30"}, headers=h,
+    )
+    all_resp = await client.get(
+        "/api/v1/analytics/net-worth-composition",
+        params={"to": "2026-09-30", "all": "true"}, headers=h,
+    )
+
+    valuation_month_end = "2024-12-31"  # month_end(old_valuation)
+    default_periods = [p["period_start"] for p in default_resp.json()["USD"]]
+    all_periods = [p["period_start"] for p in all_resp.json()["USD"]]
+    assert len(default_periods) == 12  # the ordinary rolling 12-month axis
+    assert valuation_month_end not in default_periods  # too far back for the default window
+    assert len(all_periods) > 12  # the axis now reaches back to the valuation's month
+    assert valuation_month_end in all_periods
+
+
 # ------------------------------------------------------------------- endpoints
 
 
@@ -479,24 +608,29 @@ async def test_endpoints_default_date_range_ok(client, initialized_instance):
         assert isinstance(resp.json(), dict)
 
 
-async def test_net_worth_endpoint_persists_today_snapshot(client, db, initialized_instance):
+async def test_net_worth_endpoint_reconstructs_without_persisting(client, db, initialized_instance):
+    """The endpoint reconstructs the series on the fly (same as
+    net-worth-composition) — it no longer writes to net_worth_snapshots."""
     ws_id = await _ws_id(db, initialized_instance)
     acc = await _account(db, ws_id, currency="USD", initial=100_000)
     await _tx(db, ws_id, acc, amount=10_000, on=date(2026, 1, 15))
     await db.commit()
     h = await _auth(client)
 
-    resp = await client.get("/api/v1/analytics/net-worth", headers=h)
+    resp = await client.get(
+        "/api/v1/analytics/net-worth",
+        params={"from": "2026-01-01", "to": "2026-01-31"}, headers=h,
+    )
     assert resp.status_code == 200
+    body = resp.json()
+    assert body["USD"][-1] == {"date": "2026-01-31", "net_worth_minor": 110_000}
 
-    # the router committed the lazily-captured snapshot -> a fresh read sees it
-    row = await db.scalar(
-        sa.select(NetWorthSnapshot).where(
-            NetWorthSnapshot.workspace_id == ws_id, NetWorthSnapshot.currency == "USD"
+    count = await db.scalar(
+        sa.select(sa.func.count()).select_from(NetWorthSnapshot).where(
+            NetWorthSnapshot.workspace_id == ws_id
         )
     )
-    assert row is not None
-    assert row.net_worth_minor == 110_000
+    assert count == 0
 
 
 async def test_net_worth_composition_endpoint_returns_per_currency(client, db, initialized_instance):

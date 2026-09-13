@@ -39,8 +39,14 @@ export interface AnalyticsRange {
  * <endpoint>]` prefix when no window is selected (identical to the pre-Task-4
  * key, so the dashboard's cache slot is unchanged), or that prefix plus the
  * `{ from, to }` object when a period is chosen — a distinct slot per window
- * that still falls under the shared prefix for invalidation. */
-function analyticsKey(endpoint: string, range?: AnalyticsRange) {
+ * that still falls under the shared prefix for invalidation. The all-time
+ * mode (`allTime`, the Insights "All time" option → `?all=true`) gets its own
+ * `"all"` slot on the same footing: a distinct cache entry, so switching to
+ * it refetches, still covered by the `["analytics"]` prefix. */
+function analyticsKey(endpoint: string, range?: AnalyticsRange, allTime?: boolean) {
+  if (allTime) {
+    return ["analytics", endpoint, "all"] as const;
+  }
   return range ? (["analytics", endpoint, range] as const) : (["analytics", endpoint] as const);
 }
 
@@ -152,11 +158,16 @@ export const qk = {
    * invalidation covers every window at once. */
   analytics: {
     netWorth: (range?: AnalyticsRange) => analyticsKey("net-worth", range),
-    netWorthComposition: (range?: AnalyticsRange) =>
-      analyticsKey("net-worth-composition", range),
+    // The three all-capable breakdowns additionally take the Insights
+    // selector's all-time flag (`?all=true` server-side, an `"all"` key slot
+    // here); net-worth/cashflow have no all-time read and keep range-only keys.
+    netWorthComposition: (range?: AnalyticsRange, allTime?: boolean) =>
+      analyticsKey("net-worth-composition", range, allTime),
     cashflow: (range?: AnalyticsRange) => analyticsKey("cashflow", range),
-    spendingByCategory: (range?: AnalyticsRange) => analyticsKey("spending-by-category", range),
-    spendingByContact: (range?: AnalyticsRange) => analyticsKey("spending-by-contact", range),
+    spendingByCategory: (range?: AnalyticsRange, allTime?: boolean) =>
+      analyticsKey("spending-by-category", range, allTime),
+    spendingByContact: (range?: AnalyticsRange, allTime?: boolean) =>
+      analyticsKey("spending-by-contact", range, allTime),
     /** The dashboard's "what's coming" panel (`/analytics/upcoming`). Unlike
      * the others this endpoint takes no reporting range (its own `within_days`
      * horizon, server-defaulted) and returns a `{ due, over_budget }` object

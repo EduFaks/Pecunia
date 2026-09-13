@@ -101,6 +101,28 @@ async def test_list_sorted_soonest_first(client, initialized_instance):
     assert [s["id"] for s in lst["items"]] == [sooner["id"], later["id"]]
 
 
+async def test_list_filters_by_contact_id(client, initialized_instance):
+    h = await _auth(client)
+    acc = await _account(client, h)
+    acme = await _contact(client, h, name="Acme")
+    other = await _contact(client, h, name="Other")
+    matching = (
+        await client.post(
+            "/api/v1/planned", json=_sched_body(acc["id"], contact_id=acme["id"]), headers=h
+        )
+    ).json()
+    await client.post(
+        "/api/v1/planned", json=_sched_body(acc["id"], contact_id=other["id"]), headers=h
+    )
+    await client.post("/api/v1/planned", json=_sched_body(acc["id"]), headers=h)  # no contact
+
+    lst = (
+        await client.get(f"/api/v1/planned?contact_id={acme['id']}", headers=h)
+    ).json()
+
+    assert [s["id"] for s in lst["items"]] == [matching["id"]]
+
+
 async def test_create_foreign_account_404(client, initialized_instance):
     h = await _auth(client)
     resp = await client.post(

@@ -9,10 +9,16 @@ from pecunia.activity.templates import Activity
 from pecunia.audit.actions import Actions
 from pecunia.audit.allowlists import project
 from pecunia.events import DomainEvent, event_bus
+from pecunia.models.contact import Contact
 from pecunia.models.loan import Loan, LoanDirection, LoanPayment
 from pecunia.models.transaction import Transaction
 from pecunia.pagination import DEFAULT_LIMIT, MAX_LIMIT, keyset_page
 from pecunia.services.scoping import get_scoped, scoped_select
+
+# Reuse the transaction domain's contact lookup exception so the router maps
+# a foreign contact_id to the same 404 CONTACT_NOT_FOUND the rest of the app
+# uses (mirrors ScheduledTransactionService/SubscriptionService).
+from pecunia.services.transactions import ContactNotFoundError
 
 # Sentinel distinguishing "field absent from the PATCH body" from "field
 # explicitly set to null" for the nullable loan columns.
@@ -70,6 +76,10 @@ class LoanService:
 
     # ---- Loan CRUD -------------------------------------------------------- #
 
+    async def _validate_contact(self, workspace_id: uuid.UUID, contact_id: uuid.UUID) -> None:
+        if await get_scoped(self.db, Contact, contact_id, workspace_id) is None:
+            raise ContactNotFoundError()
+
     async def create(
         self,
         workspace_id: uuid.UUID,
@@ -84,7 +94,10 @@ class LoanService:
         next_due: date | None = None,
         opened_on: date | None = None,
         description: str | None = None,
+        contact_id: uuid.UUID | None = None,
     ) -> Loan:
+        if contact_id is not None:
+            await self._validate_contact(workspace_id, contact_id)
         loan = Loan(
             id=uuid.uuid4(),
             workspace_id=workspace_id,
@@ -98,6 +111,7 @@ class LoanService:
             next_due=next_due,
             opened_on=opened_on,
             description=description,
+            contact_id=contact_id,
         )
         self.db.add(loan)
         await self.db.flush()
@@ -123,14 +137,16 @@ class LoanService:
         self,
         workspace_id: uuid.UUID,
         *,
+        contact_id: uuid.UUID | None = None,
         cursor: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> tuple[builtins.list[Loan], str | None]:
         # UUID primary keys carry no order — paginate newest-first on
         # created_at, with id as a deterministic tiebreaker (CONVENTIONS §6).
-        stmt = scoped_select(Loan, workspace_id).order_by(
-            Loan.created_at.desc(), Loan.id.desc()
-        )
+        stmt = scoped_select(Loan, workspace_id)
+        if contact_id is not None:
+            stmt = stmt.where(Loan.contact_id == contact_id)
+        stmt = stmt.order_by(Loan.created_at.desc(), Loan.id.desc())
         return await keyset_page(
             self.db,
             stmt,
@@ -159,7 +175,13 @@ class LoanService:
         next_due: object = UNSET,
         opened_on: object = UNSET,
         description: object = UNSET,
+        contact_id: object = UNSET,
     ) -> Loan:
+        # Validate BEFORE mutating anything, so a foreign contact_id leaves
+        # the loan untouched (mirrors ScheduledTransactionService/
+        # SubscriptionService.update).
+        if contact_id is not UNSET and contact_id is not None:
+            await self._validate_contact(loan.workspace_id, contact_id)  # type: ignore[arg-type]
         before = project("loan", loan)
         if name is not None:
             loan.name = name
@@ -181,6 +203,8 @@ class LoanService:
             loan.opened_on = opened_on  # type: ignore[assignment]
         if description is not UNSET:
             loan.description = description  # type: ignore[assignment]
+        if contact_id is not UNSET:
+            loan.contact_id = contact_id  # type: ignore[assignment]
         loan.updated_at = datetime.now(UTC)
         await self.db.flush()
         await event_bus.publish(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectCurrency } from "./useAnalytics";
+import { analyticsPath, selectCurrency } from "./useAnalytics";
 import type { NetWorthPoint, PerCurrency } from "./useAnalytics";
 
 const RESPONSE: PerCurrency<NetWorthPoint> = {
@@ -22,5 +22,29 @@ describe("selectCurrency", () => {
 
   it("returns an empty list when the response is undefined (still loading)", () => {
     expect(selectCurrency(undefined, "USD")).toEqual([]);
+  });
+});
+
+describe("analyticsPath", () => {
+  it("builds a bare path when no window is given (server-defaulted range)", () => {
+    expect(analyticsPath("cashflow")).toBe("/analytics/cashflow");
+  });
+
+  it("appends from/to for a bounded window", () => {
+    expect(analyticsPath("spending-by-category", { from: "2026-06-12", to: "2026-09-12" })).toBe(
+      "/analytics/spending-by-category?from=2026-06-12&to=2026-09-12",
+    );
+  });
+
+  it("sends all=true and omits from/to for the all-time mode", () => {
+    expect(analyticsPath("spending-by-category", undefined, true)).toBe(
+      "/analytics/spending-by-category?all=true",
+    );
+  });
+
+  it("lets all-time win over a stale range (no from leaks through)", () => {
+    expect(analyticsPath("net-worth-composition", { from: "2026-06-12", to: "2026-09-12" }, true)).toBe(
+      "/analytics/net-worth-composition?all=true",
+    );
   });
 });

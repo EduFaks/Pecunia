@@ -180,11 +180,14 @@ async def create_subscription(
 async def list_subscriptions(
     db: Annotated[AsyncSession, Depends(get_db)],
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+    contact_id: uuid.UUID | None = None,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> SubscriptionPage:
     svc = SubscriptionService(db)
-    items, next_cursor = await svc.list(wsctx.workspace_id, cursor=cursor, limit=limit)
+    items, next_cursor = await svc.list(
+        wsctx.workspace_id, contact_id=contact_id, cursor=cursor, limit=limit
+    )
     return SubscriptionPage(
         items=[SubscriptionOut.from_model(s) for s in items], next_cursor=next_cursor
     )

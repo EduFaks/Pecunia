@@ -31,6 +31,10 @@ function installFakeBackend() {
       if (path === "/auth/me") {
         return Promise.resolve({ user: null, preferences: null });
       }
+      // The form's `ContactPicker` fetches both of these on its own.
+      if (path.startsWith("/contacts?") || path.startsWith("/categories?")) {
+        return Promise.resolve({ items: [], next_cursor: null });
+      }
       if (path.startsWith("/loans?") && method === "GET") {
         return Promise.resolve({ items: loans, next_cursor: null });
       }
@@ -48,6 +52,7 @@ function installFakeBackend() {
           next_due: null,
           opened_on: null,
           description: null,
+          contact_id: null,
           is_demo: false,
           created_at: "2026-09-12T00:00:00Z",
           paid_total_minor: 0,
@@ -102,6 +107,7 @@ const CAR_LOAN: LoanOut = {
   next_due: "2026-10-01",
   opened_on: "2025-01-01",
   description: null,
+  contact_id: null,
   is_demo: false,
   created_at: "2026-01-01T00:00:00Z",
   paid_total_minor: 500_000, // $5,000.00 → 20%

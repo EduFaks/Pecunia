@@ -10,6 +10,8 @@ import Spinner from "../../components/ui/Spinner";
 import { useToast } from "../../components/ui/Toast";
 import type { ReactNode } from "react";
 import { DateText, MoneyText } from "../../lib/preferences";
+import ContactBadge from "../contacts/ContactBadge";
+import { useContacts } from "../contacts/useContacts";
 import { useTransactionList } from "../transactions/useTransactions";
 import { bpsToPct } from "./interest";
 import LoanForm from "./LoanForm";
@@ -50,7 +52,8 @@ function Term({ label, children }: { label: string; children: ReactNode }) {
 /**
  * `/loans/:id` — one loan's detail: header (name, Borrowed/Lent `Pill`,
  * currency, hero remaining balance, payoff bar), a terms grid (planned
- * payment + frequency, next due, interest rate, opened on), the payments
+ * payment + frequency, next due, interest rate, opened on, the linked
+ * counterparty contact as a `ContactBadge`), the payments
  * ledger table (amount, date, note) with a **Record payment** action
  * (`PaymentForm`) and a per-payment delete, plus inline edit/delete for the
  * loan itself. Deletes (payment or loan) route through `ConfirmDialog`.
@@ -70,6 +73,15 @@ function LoanDetail() {
   const deleteLoan = useDeleteLoan();
   const deletePayment = useDeletePayment(id ?? "");
   const updatePayment = useUpdateLoanPayment(id ?? "");
+
+  // Resolve the loan's linked contact (the counterparty) to a real contact so
+  // the terms grid can show its `ContactBadge`. Archived included, so a
+  // contact archived after being linked still resolves — the same rationale as
+  // `ContactPicker`'s own read.
+  const contactsQuery = useContacts(true);
+  const linkedContact =
+    (contactsQuery.data?.items ?? []).find((contact) => contact.id === loanQuery.data?.contact_id) ??
+    null;
 
   // Resolve a payment's linked transaction (its `transaction_id`) to a real
   // transaction so the ledger can show its description/amount/date — the
@@ -199,6 +211,12 @@ function LoanDetail() {
         {loan.opened_on ? (
           <Term label="Opened on">
             <DateText iso={loan.opened_on} />
+          </Term>
+        ) : null}
+        {loan.contact_id ? (
+          <Term label="Contact">
+            {/* Renders nothing until the contacts list resolves the id. */}
+            <ContactBadge contact={linkedContact} className="text-sm" />
           </Term>
         ) : null}
       </dl>
