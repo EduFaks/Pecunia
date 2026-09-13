@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     setup_token: str = ""
     trusted_proxies_raw: str = ""
     server_names_raw: str = ""
+    # Gates the daily in-process crypto price sync (Track Q) — the app's
+    # first outbound network call. On by default; set to false for a fully
+    # offline / no-egress deployment. The on-demand refresh endpoint works
+    # regardless of this flag.
+    enable_price_sync: bool = True
 
     @property
     def trusted_proxies(self) -> list[str]:
