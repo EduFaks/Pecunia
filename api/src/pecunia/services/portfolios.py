@@ -152,6 +152,7 @@ class PortfolioService:
         name: str,
         quantity: Decimal,
         symbol: str | None = None,
+        coingecko_id: str | None = None,
     ) -> Holding:
         holding = Holding(
             id=uuid.uuid4(),
@@ -160,6 +161,7 @@ class PortfolioService:
             name=name,
             symbol=symbol,
             quantity=quantity,
+            coingecko_id=coingecko_id,
         )
         self.db.add(holding)
         await self.db.flush()
@@ -210,6 +212,7 @@ class PortfolioService:
         name: str | None = None,
         quantity: Decimal | None = None,
         symbol: object = UNSET,
+        coingecko_id: object = UNSET,
     ) -> Holding:
         before = project("holding", holding)
         if name is not None:
@@ -218,6 +221,8 @@ class PortfolioService:
             holding.quantity = quantity
         if symbol is not UNSET:
             holding.symbol = symbol  # type: ignore[assignment]
+        if coingecko_id is not UNSET:
+            holding.coingecko_id = coingecko_id  # type: ignore[assignment]
         holding.updated_at = datetime.now(UTC)
         await self.db.flush()
         await event_bus.publish(

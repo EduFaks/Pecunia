@@ -33,7 +33,9 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     "portfolio": frozenset({"id", "name", "currency", "description", "is_demo"}),
     # quantity is a Decimal — project() str()-serializes it (it is not one of
     # str/int/float/bool), so it lands in the audit payload as e.g. "12.5".
-    "holding": frozenset({"id", "portfolio_id", "name", "symbol", "quantity", "is_demo"}),
+    "holding": frozenset(
+        {"id", "portfolio_id", "name", "symbol", "quantity", "coingecko_id", "is_demo"}
+    ),
     "holding_price": frozenset(
         {"id", "holding_id", "unit_price_minor", "as_of", "source", "is_demo"}
     ),

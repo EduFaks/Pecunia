@@ -69,12 +69,16 @@ class HoldingIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     quantity: QuantityDecimal
     symbol: str | None = Field(default=None, max_length=32)
+    # Non-null makes the holding auto-priceable (Track Q): the CoinGecko coin
+    # id (e.g. "bitcoin"), picked via GET /portfolios/coins.
+    coingecko_id: str | None = Field(default=None, max_length=200)
 
 
 class HoldingUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     quantity: QuantityDecimal | None = None
     symbol: str | None = Field(default=None, max_length=32)
+    coingecko_id: str | None = Field(default=None, max_length=200)
 
 
 class HoldingOut(BaseModel):
@@ -83,6 +87,7 @@ class HoldingOut(BaseModel):
     name: str
     symbol: str | None
     quantity: str
+    coingecko_id: str | None
     latest_unit_price_minor: int | None
     value_minor: int
     is_demo: bool
@@ -98,6 +103,7 @@ class HoldingOut(BaseModel):
             name=holding.name,
             symbol=holding.symbol,
             quantity=str(holding.quantity),
+            coingecko_id=holding.coingecko_id,
             latest_unit_price_minor=latest_unit_price_minor,
             value_minor=value_minor,
             is_demo=holding.is_demo,
@@ -262,7 +268,11 @@ async def add_holding(
     svc = PortfolioService(db)
     portfolio = await _get_or_404(svc, wsctx.workspace_id, portfolio_id)
     holding = await svc.add_holding(
-        portfolio, name=body.name, quantity=body.quantity, symbol=body.symbol
+        portfolio,
+        name=body.name,
+        quantity=body.quantity,
+        symbol=body.symbol,
+        coingecko_id=body.coingecko_id,
     )
     await db.commit()
     return await _holding_out(svc, holding)
@@ -312,6 +322,7 @@ async def update_holding(
         name=fields.get("name"),
         quantity=fields.get("quantity"),
         symbol=fields.get("symbol", UNSET),
+        coingecko_id=fields.get("coingecko_id", UNSET),
     )
     await db.commit()
     return await _holding_out(svc, holding)

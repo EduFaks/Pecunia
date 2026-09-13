@@ -139,6 +139,53 @@ async def test_add_and_get_holding(client, initialized_instance):
     assert got.json()["id"] == holding["id"]
 
 
+async def test_add_holding_with_coingecko_id(client, initialized_instance):
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    resp = await client.post(
+        f"/api/v1/portfolios/{p['id']}/holdings",
+        json={"name": "Bitcoin", "quantity": "0.5", "coingecko_id": "bitcoin"},
+        headers=h,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["coingecko_id"] == "bitcoin"
+    # a holding created without one defaults to null — not auto-priceable.
+    manual = await _holding(client, h, p["id"], quantity="1")
+    assert manual["coingecko_id"] is None
+
+
+async def test_update_holding_sets_and_clears_coingecko_id(client, initialized_instance):
+    h = await _auth(client)
+    p = await _portfolio(client, h)
+    holding = await _holding(client, h, p["id"], quantity="1")
+    assert holding["coingecko_id"] is None
+
+    resp = await client.patch(
+        f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}",
+        json={"coingecko_id": "ethereum"},
+        headers=h,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["coingecko_id"] == "ethereum"
+
+    # PATCH omits the field entirely -> untouched (UNSET semantics).
+    resp = await client.patch(
+        f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}",
+        json={"name": "Ether"},
+        headers=h,
+    )
+    assert resp.json()["coingecko_id"] == "ethereum"
+
+    # PATCH sends an explicit null -> cleared.
+    resp = await client.patch(
+        f"/api/v1/portfolios/{p['id']}/holdings/{holding['id']}",
+        json={"coingecko_id": None},
+        headers=h,
+    )
+    assert resp.json()["coingecko_id"] is None
+
+
 async def test_list_holdings(client, initialized_instance):
     h = await _auth(client)
     p = await _portfolio(client, h)
