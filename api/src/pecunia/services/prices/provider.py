@@ -110,7 +110,9 @@ class FakePriceProvider:
     `raise_for_currencies` makes `prices()` raise `PriceProviderError`
     instead. Every `prices()` call is recorded in `.calls` (ids, currency) so
     a refresh-service test can assert "one call per currency" without a
-    mocking framework."""
+    mocking framework. `raise_coins=True` makes `coins()` raise
+    `PriceProviderError` instead of returning the list — simulating a
+    CoinGecko outage for the coin-search proxy."""
 
     def __init__(
         self,
@@ -118,10 +120,12 @@ class FakePriceProvider:
         prices_by_currency: dict[str, dict[str, int]] | None = None,
         coins: list[dict[str, str]] | None = None,
         raise_for_currencies: set[str] | None = None,
+        raise_coins: bool = False,
     ):
         self._prices_by_currency = prices_by_currency or {}
         self._coins = coins or []
         self._raise_for_currencies = raise_for_currencies or set()
+        self._raise_coins = raise_coins
         self.calls: list[tuple[list[str], str]] = []
         self.coins_calls = 0
 
@@ -134,6 +138,8 @@ class FakePriceProvider:
 
     async def coins(self) -> list[dict[str, str]]:
         self.coins_calls += 1
+        if self._raise_coins:
+            raise PriceProviderError("fake provider coin-list failure")
         return self._coins
 
 

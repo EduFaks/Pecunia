@@ -581,6 +581,23 @@ async def test_coins_endpoint_caps_results(client, app, initialized_instance):
     assert len(resp.json()) == 20
 
 
+async def test_coins_endpoint_returns_503_when_coin_list_unavailable(client, app, initialized_instance):
+    """A CoinGecko outage (M1): `coins()` raising `PriceProviderError` must
+    surface as a typed 503, not an uncaught 500 — the picker degrades
+    gracefully (`CoinPicker.tsx` shows a muted "enter the id manually" note)
+    instead of the whole holding form blowing up."""
+    from pecunia.api.portfolios import get_price_provider
+    from pecunia.services.prices.provider import FakePriceProvider
+
+    h = await _auth(client)
+    fake = FakePriceProvider(raise_coins=True)
+    app.dependency_overrides[get_price_provider] = lambda: fake
+
+    resp = await client.get("/api/v1/portfolios/coins", headers=h)
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "COIN_LIST_UNAVAILABLE"
+
+
 def test_get_price_provider_caches_one_instance_on_app_state():
     """The DI half of Task 4's "cache populated on first call": the
     dependency itself must hand back the SAME provider across calls (via

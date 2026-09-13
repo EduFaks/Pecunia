@@ -16,6 +16,7 @@ from pecunia.services.portfolios import UNSET, PortfolioService
 from pecunia.services.prices.provider import (
     CoinGeckoPriceProvider,
     CryptoPriceProvider,
+    PriceProviderError,
     filter_coins,
 )
 from pecunia.services.prices.refresh import PriceRefreshService
@@ -291,7 +292,10 @@ async def search_coins(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
     q: str | None = None,
 ) -> list[CoinOut]:
-    coins = await provider.coins()
+    try:
+        coins = await provider.coins()
+    except PriceProviderError:
+        raise HTTPException(status_code=503, detail="COIN_LIST_UNAVAILABLE") from None
     return [CoinOut(**coin) for coin in filter_coins(coins, q)]
 
 
