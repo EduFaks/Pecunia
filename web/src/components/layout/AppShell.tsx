@@ -136,7 +136,7 @@ function AppShell() {
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-hairline bg-surface-1 shadow-pc-2 transition-transform duration-200 ease-pc",
-          "md:static md:z-auto md:w-56 md:translate-x-0 md:shadow-none",
+          "md:sticky md:top-0 md:h-screen md:self-start md:overflow-y-auto md:z-auto md:w-56 md:translate-x-0 md:shadow-none",
           navOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
