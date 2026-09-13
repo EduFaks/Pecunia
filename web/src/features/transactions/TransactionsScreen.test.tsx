@@ -332,7 +332,7 @@ describe("TransactionsScreen", () => {
     expect(within(row).getByText("Food")).toBeInTheDocument();
   });
 
-  it("shows in / out / net totals for the currently loaded transactions, with no 'this page' note when the list isn't truncated", async () => {
+  it("shows in / out / net totals for the currently loaded transactions, with no 'loaded rows' note when the list isn't truncated", async () => {
     seed([CHECKING], [GROCERIES, PAYCHECK]);
     renderScreen();
 
@@ -353,10 +353,10 @@ describe("TransactionsScreen", () => {
     const netAmount = within(netBlock).getByText("$2,415.01");
     expect(netAmount.className).toMatch(/text-positive/);
 
-    expect(screen.queryByText(/this page/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/loaded rows/i)).not.toBeInTheDocument();
   });
 
-  it("labels the totals 'this page' when more transactions remain beyond the loaded page", async () => {
+  it("labels the totals 'loaded rows' when more transactions remain beyond the loaded page", async () => {
     mockApiFetch.mockReset().mockImplementation((path: string, opts?: { method?: string }) => {
       const method = opts?.method ?? "GET";
       if (path.startsWith("/accounts?") && method === "GET") {
@@ -375,7 +375,7 @@ describe("TransactionsScreen", () => {
 
     await screen.findByText("Groceries");
 
-    expect(await screen.findByText(/this page/i)).toBeInTheDocument();
+    expect(await screen.findByText(/loaded rows/i)).toBeInTheDocument();
   });
 
   it("shows a transaction's contact in its row", async () => {

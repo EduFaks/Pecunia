@@ -273,7 +273,7 @@ function TransactionsScreen() {
       {loadedPage.items.length > 0 ? (
         <SummaryHeader
           stats={inOutNetStats}
-          note={loadedPage.hasNextPage ? "this page" : undefined}
+          note={loadedPage.hasNextPage ? "loaded rows" : undefined}
         />
       ) : null}
 
