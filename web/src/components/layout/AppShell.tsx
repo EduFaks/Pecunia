@@ -11,6 +11,7 @@ import {
   LineChart,
   Menu,
   PieChart,
+  PiggyBank,
   RefreshCw,
   Settings,
   Target,
@@ -70,6 +71,7 @@ const NAV_GROUPS: { section: string | null; items: NavItem[] }[] = [
   {
     section: "Plan",
     items: [
+      { label: "Goals", to: "/goals", end: false, icon: PiggyBank },
       { label: "Contacts", to: "/contacts", end: false, icon: Users },
       { label: "Projects", to: "/projects", end: false, icon: FolderKanban },
     ],

@@ -18,6 +18,7 @@ from pecunia.api.budgets import router as budgets_router
 from pecunia.api.categories import router as categories_router
 from pecunia.api.contacts import router as contacts_router
 from pecunia.api.demo import router as demo_router
+from pecunia.api.goals import router as goals_router
 from pecunia.api.health import router as health_router
 from pecunia.api.loans import router as loans_router
 from pecunia.api.middleware import RequestContextMiddleware
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(contacts_router, prefix="/api/v1")
     app.include_router(scheduled_transactions_router, prefix="/api/v1")
     app.include_router(subscriptions_router, prefix="/api/v1")
+    app.include_router(goals_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(demo_router, prefix="/api/v1")
     app.add_middleware(RequestContextMiddleware)

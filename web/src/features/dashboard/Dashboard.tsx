@@ -33,6 +33,7 @@ import type { TransactionLite } from "./balanceSeries";
 import { selectPrimaryAccount } from "./balances";
 import type { AccountSummary, AssetSummary } from "./balances";
 import CommittedMonthlyCard from "./CommittedMonthlyCard";
+import GoalsWidget from "./GoalsWidget";
 import NetWorthChangeCard from "./NetWorthChangeCard";
 import RecentActivity from "./RecentActivity";
 import SavingsRateCard from "./SavingsRateCard";
@@ -399,6 +400,8 @@ function Dashboard() {
         />
         <UpcomingWidget />
       </div>
+
+      <GoalsWidget />
 
       <RecentActivity entries={activity} />
     </div>

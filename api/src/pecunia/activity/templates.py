@@ -12,6 +12,7 @@ class Activity:
     HOLDING_PRICE_CHANGED = "activity.holding.price_changed"
     LOAN_CREATED = "activity.loan.created"
     BUDGET_CREATED = "activity.budget.created"
+    GOAL_CREATED = "activity.goal.created"
     CATEGORY_CREATED = "activity.category.created"
     SCHEDULED_TRANSACTION_CREATED = "activity.scheduled_transaction.created"
     SUBSCRIPTION_CREATED = "activity.subscription.created"

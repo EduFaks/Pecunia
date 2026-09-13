@@ -7,6 +7,7 @@ from pecunia.models.base import Base
 from pecunia.models.budget import Budget, BudgetPeriod
 from pecunia.models.category import DEFAULT_CATEGORIES, PALETTE, Category, CategoryKind
 from pecunia.models.contact import Contact, ContactType
+from pecunia.models.goal import Goal, GoalSourceKind
 from pecunia.models.instance import InstanceState
 from pecunia.models.loan import Loan, LoanDirection, LoanPayment
 from pecunia.models.net_worth_snapshot import NetWorthSnapshot
@@ -37,6 +38,8 @@ __all__ = [
     "CategoryKind",
     "Contact",
     "ContactType",
+    "Goal",
+    "GoalSourceKind",
     "Holding",
     "HoldingPrice",
     "InstanceState",

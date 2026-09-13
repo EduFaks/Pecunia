@@ -41,6 +41,7 @@ function mockEndpoints(overrides: {
   assets?: unknown[];
   portfolios?: unknown[];
   loans?: unknown[];
+  goals?: unknown[];
   activity?: unknown[];
   transactions?: unknown[];
   netWorth?: Record<string, unknown[]>;
@@ -90,6 +91,9 @@ function mockEndpoints(overrides: {
     }
     if (path.startsWith("/loans")) {
       return Promise.resolve({ items: overrides.loans ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/goals")) {
+      return Promise.resolve({ items: overrides.goals ?? [], next_cursor: null });
     }
     if (path.startsWith("/activity")) {
       return Promise.resolve({ items: overrides.activity ?? [], next_cursor: null });
