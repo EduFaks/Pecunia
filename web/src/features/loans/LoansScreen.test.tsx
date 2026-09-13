@@ -138,7 +138,7 @@ describe("LoansScreen", () => {
     expect(bar).toHaveAttribute("aria-valuenow", "20");
   });
 
-  it("shows total borrowed, total lent, and total remaining, kept separate by direction and currency", async () => {
+  it("shows Owed and To collect, split by direction and currency (never combined)", async () => {
     const RECEIVABLE: LoanOut = {
       id: "l2",
       name: "Loaned to a friend",
@@ -162,17 +162,17 @@ describe("LoansScreen", () => {
 
     await screen.findByText("Car loan");
 
-    const borrowedBlock = screen.getByText("Total borrowed").parentElement!;
+    const owedBlock = screen.getByText("Owed").parentElement!;
     // Only CAR_LOAN is borrowed: remaining_minor 2_000_000 -> $20,000.00
-    expect(within(borrowedBlock).getByText(/20,000\.00/)).toBeInTheDocument();
+    expect(within(owedBlock).getByText(/20,000\.00/)).toBeInTheDocument();
 
-    const lentBlock = screen.getByText("Total lent").parentElement!;
+    const toCollectBlock = screen.getByText("To collect").parentElement!;
     // Only RECEIVABLE is lent: remaining_minor 400_000 -> $4,000.00
-    expect(within(lentBlock).getByText(/4,000\.00/)).toBeInTheDocument();
+    expect(within(toCollectBlock).getByText(/4,000\.00/)).toBeInTheDocument();
 
-    const remainingBlock = screen.getByText("Total remaining").parentElement!;
-    // Both loans combined: 2_000_000 + 400_000 = 2_400_000 -> $24,000.00
-    expect(within(remainingBlock).getByText(/24,000\.00/)).toBeInTheDocument();
+    // No combined-across-direction total — summing "owed" and "to collect"
+    // together would be meaningless (they're opposite obligations).
+    expect(screen.queryByText(/total remaining/i)).not.toBeInTheDocument();
   });
 
   it("creates a loan with the posted fields and shows it in the list", async () => {

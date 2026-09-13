@@ -39,18 +39,21 @@ function LoansScreen() {
   const loansQuery = useLoans();
   const loans = loansQuery.data?.items ?? [];
 
-  const remainingStat = (label: string, items: LoanOut[]): SummaryStat => ({
+  // Remaining balance split by direction — borrowed and lent are opposite
+  // obligations (what you still owe vs. what's still owed to you), so
+  // summing them together into one combined "total remaining" would be
+  // meaningless. Each stays its own per-currency stat instead.
+  const remainingByDirection = (label: string, direction: LoanDirection): SummaryStat => ({
     label,
     entries: sumByCurrency(
-      items,
+      loans.filter((loan) => loan.direction === direction),
       (loan) => loan.remaining_minor,
       (loan) => loan.currency,
     ).map(({ currency, total_minor }) => ({ currency, value_minor: total_minor })),
   });
   const loanStats: SummaryStat[] = [
-    remainingStat("Total borrowed", loans.filter((loan) => loan.direction === "borrowed")),
-    remainingStat("Total lent", loans.filter((loan) => loan.direction === "lent")),
-    remainingStat("Total remaining", loans),
+    remainingByDirection("Owed", "borrowed"),
+    remainingByDirection("To collect", "lent"),
   ];
 
   return (
