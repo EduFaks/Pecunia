@@ -1,0 +1,210 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { apiFetch } from "../../lib/api";
+import { ToastProvider } from "../../components/ui/Toast";
+import { qk } from "../../lib/queries";
+import ConnectionsPanel from "./ConnectionsPanel";
+import type { BankConnectionOut, BankLinkOut } from "./useBankSync";
+
+vi.mock("../../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/api")>();
+  return { ...actual, apiFetch: vi.fn() };
+});
+const mockApiFetch = vi.mocked(apiFetch);
+
+const BANK_LINK_1: BankLinkOut = {
+  id: "link1",
+  account_id: "acct1",
+  account_name: "Checking",
+  account_currency: "USD",
+  pluggy_account_id: "pluggy-1",
+  sync_from: "2026-01-01",
+  provider_balance_minor: 500_000, // $5,000.00
+  provider_balance_as_of: "2026-09-30",
+  derived_balance_minor: 500_000,
+  credit_limit_minor: null,
+  bill_close_date: null,
+  bill_due_date: null,
+};
+
+const BANK_LINK_2: BankLinkOut = {
+  id: "link2",
+  account_id: "acct2",
+  account_name: "Savings",
+  account_currency: "USD",
+  pluggy_account_id: "pluggy-2",
+  sync_from: "2026-02-01",
+  provider_balance_minor: 1_000_000, // $10,000.00
+  provider_balance_as_of: "2026-09-30",
+  derived_balance_minor: 900_000, // $9,000.00 — divergence
+  credit_limit_minor: null,
+  bill_close_date: null,
+  bill_due_date: null,
+};
+
+const CONNECTION: BankConnectionOut = {
+  id: "conn1",
+  status: "ok",
+  last_error: null,
+  last_synced_at: "2026-09-30T10:00:00Z",
+  links: [BANK_LINK_1, BANK_LINK_2],
+};
+
+function installFakeBackend() {
+  mockApiFetch
+    .mockReset()
+    .mockImplementation((path: string, opts?: { method?: string; json?: unknown }) => {
+      const method = opts?.method ?? "GET";
+
+      if (path === "/auth/me") {
+        return Promise.resolve({ user: null, preferences: null });
+      }
+      if (path === "/bank-sync/connections" && method === "GET") {
+        return Promise.resolve([CONNECTION]);
+      }
+      if (path === "/bank-sync/sync" && method === "POST") {
+        return Promise.resolve({
+          connections: 1,
+          created: 2,
+          skipped: 0,
+          errors: [],
+        });
+      }
+      if (path === "/bank-sync/links/link1/reconcile" && method === "POST") {
+        return Promise.resolve({
+          id: "tx1",
+          account_id: "acct1",
+          description: "Reconcile transaction",
+          amount_minor: 0,
+          currency: "USD",
+          date: "2026-09-30",
+          type: "transfer",
+          category_id: null,
+          contact_id: null,
+          is_demo: false,
+          created_at: "2026-09-30T10:00:00Z",
+        });
+      }
+      if (path === "/bank-sync/links/link1" && method === "DELETE") {
+        return Promise.resolve(undefined);
+      }
+      if (path === "/bank-sync/connections/conn1" && method === "DELETE") {
+        return Promise.resolve(undefined);
+      }
+      return Promise.reject(new Error(`unexpected call: ${method} ${path}`));
+    });
+}
+
+function renderPanel() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient.setQueryData(qk.me, {
+    user: null,
+    preferences: {
+      base_currency: "USD",
+      locale: "en-US",
+      date_format: "MM/DD/YYYY",
+      number_format: "1,234.56",
+      timezone: "UTC",
+      first_day_of_week: "monday",
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <ConnectionsPanel />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("ConnectionsPanel", () => {
+  beforeEach(() => {
+    installFakeBackend();
+  });
+
+  it("renders a list of bank connections with their links", async () => {
+    renderPanel();
+
+    expect(await screen.findByText("Checking")).toBeInTheDocument();
+    expect(screen.getByText("Savings")).toBeInTheDocument();
+  });
+
+  it("shows a divergence badge only when provider and derived balances differ", async () => {
+    renderPanel();
+
+    const checkingRow = (await screen.findByText("Checking")).closest("li");
+    expect(within(checkingRow!).queryByText(/divergence|mismatch/i)).not.toBeInTheDocument();
+
+    const savingsRow = screen.getByText("Savings").closest("li");
+    expect(within(savingsRow!).getByText(/divergence|mismatch/i)).toBeInTheDocument();
+  });
+
+  it("posts sync-now and toasts a summary", async () => {
+    renderPanel();
+
+    const syncButton = await screen.findByRole("button", { name: /sync now|sync/i });
+    fireEvent.click(syncButton);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/sync", { method: "POST" });
+    });
+
+    // Toast should display the summary: 1 connection, 2 created, 0 skipped
+    expect(await screen.findByText(/1.*connection|2.*created/i)).toBeInTheDocument();
+  });
+
+  it("confirms before reconciling a link", async () => {
+    renderPanel();
+
+    // Find reconcile button in the Checking row
+    const checkingRow = (await screen.findByText("Checking")).closest("li");
+    const reconcileButton = within(checkingRow!).getByRole("button", { name: /reconcile/i });
+    fireEvent.click(reconcileButton);
+
+    // Confirm dialog should appear
+    const confirmButton = await screen.findByRole("button", { name: /confirm|reconcile/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/links/link1/reconcile", {
+        method: "POST",
+      });
+    });
+
+    expect(await screen.findByText(/reconciled|success/i)).toBeInTheDocument();
+  });
+
+  it("unlinks a connection", async () => {
+    renderPanel();
+
+    // Find the delete button for Checking link
+    const checkingRow = (await screen.findByText("Checking")).closest("li");
+    const deleteButton = within(checkingRow!).getByRole("button", { name: /delete|unlink|remove/i });
+    fireEvent.click(deleteButton);
+
+    // Confirm dialog
+    const confirmButton = await screen.findByRole("button", { name: /confirm|delete|unlink/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/links/link1", { method: "DELETE" });
+    });
+  });
+
+  it("deletes an entire connection", async () => {
+    renderPanel();
+
+    // Find the delete connection button
+    const deleteConnButton = await screen.findByRole("button", { name: /delete connection|disconnect/i });
+    fireEvent.click(deleteConnButton);
+
+    // Confirm dialog
+    const confirmButton = await screen.findByRole("button", { name: /confirm|delete/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/connections/conn1", { method: "DELETE" });
+    });
+  });
+});

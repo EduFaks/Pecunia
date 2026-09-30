@@ -152,6 +152,13 @@ export const qk = {
    * `features/planned/usePlanned.ts`. */
   planned: ["planned"] as const,
 
+  /** Bank sync (Track T). A single top-level key for connections,
+   * discovery, links, and category mappings. Invalidated by link/sync/reconcile
+   * mutations (which also invalidate `qk.accounts`/`qk.transactions()`/
+   * `["analytics"]`), and by unlink/delete/mappings mutations (which invalidate
+   * only this key) — see `features/banksync/useBankSync.ts`. */
+  bankSync: ["bank-sync"] as const,
+
   transfers: ["transfers"] as const,
 
   activity: ["activity"] as const,

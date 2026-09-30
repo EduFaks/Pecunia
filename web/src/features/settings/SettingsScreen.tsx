@@ -3,11 +3,12 @@ import type { ComponentType } from "react";
 import { cn } from "../../lib/cn";
 import { focusRingClass } from "../../components/ui/a11y";
 import CategoriesPanel from "../categories/CategoriesPanel";
+import ConnectionsPanel from "../banksync/ConnectionsPanel";
 import AuditLogPanel from "./AuditLogPanel";
 import PreferencesPanel from "./PreferencesPanel";
 import SessionsPanel from "./SessionsPanel";
 
-type SettingsSection = "sessions" | "audit-log" | "preferences" | "categories";
+type SettingsSection = "sessions" | "audit-log" | "preferences" | "categories" | "connections";
 
 interface SectionDef {
   id: SettingsSection;
@@ -20,6 +21,7 @@ const SECTIONS: SectionDef[] = [
   { id: "audit-log", label: "Audit Log", group: "Security" },
   { id: "preferences", label: "Preferences", group: "General" },
   { id: "categories", label: "Categories", group: "General" },
+  { id: "connections", label: "Bank Connections", group: "General" },
 ];
 
 const PANELS: Record<SettingsSection, ComponentType> = {
@@ -27,16 +29,17 @@ const PANELS: Record<SettingsSection, ComponentType> = {
   "audit-log": AuditLogPanel,
   preferences: PreferencesPanel,
   categories: CategoriesPanel,
+  connections: ConnectionsPanel,
 };
 
 /**
  * `/settings` — in-page subnav (no nested routes: every section reads the
  * same signed-in workspace's data, and none needs to be independently
- * deep-linkable in V1) over four sections: Security → Sessions, Security →
- * Audit Log, General → Preferences, and General → Categories. Each section is
- * its own component so its data-fetching only kicks in once selected.
- * (Contacts, formerly a section here, is now its own top-level `/contacts`
- * screen.)
+ * deep-linkable in V1) over five sections: Security → Sessions, Security →
+ * Audit Log, General → Preferences, General → Categories, and General → Bank
+ * Connections (Track T). Each section is its own component so its
+ * data-fetching only kicks in once selected. (Contacts, formerly a section
+ * here, is now its own top-level `/contacts` screen.)
  */
 function SettingsScreen() {
   const [section, setSection] = useState<SettingsSection>("sessions");
