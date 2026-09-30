@@ -483,7 +483,11 @@ async def test_sync_workspace_overlap_window_never_earlier_than_sync_from(db, in
     assert provider.transaction_calls == [("acc-1", date(2026, 9, 18))]  # clamped to sync_from
 
 
-async def test_sync_workspace_overlap_window_subtracts_seven_days_from_last_synced(db, initialized_instance):
+async def test_sync_workspace_overlap_window_subtracts_thirty_days_from_last_synced(db, initialized_instance):
+    """Finding 6: the overlap window is 30 days (not 7) — wide enough to
+    catch a PENDING card charge that only POSTs, with an occurred date
+    dated earlier still, well after the previous sync round already passed
+    it (a realistic card-posting delay); dedupe absorbs the re-fetch."""
     ws_id = initialized_instance["workspace_id"]
     account = await _account(db, ws_id, currency="BRL")
     last_synced_at = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
@@ -496,7 +500,7 @@ async def test_sync_workspace_overlap_window_subtracts_seven_days_from_last_sync
     )
     svc = BankSyncService(db, provider)
     await svc.sync_workspace(ws_id, today=TODAY)
-    assert provider.transaction_calls == [("acc-1", date(2026, 9, 13))]  # 2026-09-20 - 7d
+    assert provider.transaction_calls == [("acc-1", date(2026, 8, 21))]  # 2026-09-20 - 30d
 
 
 async def test_sync_workspace_pending_transactions_are_dropped(db, initialized_instance):

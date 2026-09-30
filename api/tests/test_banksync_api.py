@@ -612,7 +612,7 @@ async def test_sync_imports_new_transactions_for_a_linked_account(client, app, i
     # Re-override with a fresh fake exposing a transaction the initial link
     # sync couldn't have seen (it ran before this override existed). Dated
     # near "now" (not the fixed sync_from floor) — a resync's window is the
-    # last 7 days before last_synced_at, not the account's full history, so
+    # last 30 days before last_synced_at, not the account's full history, so
     # anything further back than that would be (correctly) filtered out.
     _override(
         app,

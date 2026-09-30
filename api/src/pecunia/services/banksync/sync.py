@@ -46,8 +46,10 @@ from pecunia.services.transactions import (
 # A subsequent sync widens its window this many days before the last
 # successful sync, to catch a transaction that posted late (e.g. a pending
 # charge that settled after the previous run already passed its date) —
-# never earlier than the link's own `sync_from` floor, though.
-SYNC_OVERLAP_DAYS = 7
+# never earlier than the link's own `sync_from` floor, though. 30 days
+# (rather than a tighter 7) covers realistic card-posting delays at trivial
+# cost for personal scale — dedupe (external_id) absorbs the wider re-fetch.
+SYNC_OVERLAP_DAYS = 30
 
 
 class ConnectionNotFoundError(Exception):
