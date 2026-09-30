@@ -338,7 +338,14 @@ class BankSyncService:
                     else BankConnectionStatus.ERROR.value
                 )
                 connection.last_error = None if item_status == "UPDATED" else item_status
-                connection.last_synced_at = datetime.now(UTC)
+                # Only a genuinely fresh (UPDATED) round advances the
+                # watermark — an item stuck in LOGIN_ERROR/etc. never raises
+                # here (its data is just stale), so without this guard the
+                # window would silently slide past an outage and the
+                # eventually-repaired login would never re-fetch what it
+                # missed (finding 1).
+                if item_status == "UPDATED":
+                    connection.last_synced_at = datetime.now(UTC)
                 await self.db.flush()
                 await event_bus.publish(
                     self.db,

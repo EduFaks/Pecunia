@@ -657,6 +657,79 @@ async def test_sync_workspace_item_login_error_marks_connection_error_with_raw_s
     assert connection.last_error == "LOGIN_ERROR"
 
 
+async def test_sync_workspace_item_error_status_does_not_advance_last_synced_at(db, initialized_instance):
+    """Finding 1: a LOGIN_ERROR round never raises (data is just stale), so
+    the old code's bare `last_synced_at = now()` after the try block would
+    silently advance it anyway. It must stay pinned at the last genuinely
+    successful (UPDATED) round."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+
+    ok_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, ok_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    await db.refresh(connection)
+    seeded_last_synced_at = connection.last_synced_at
+    assert seeded_last_synced_at is not None
+
+    error_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="LOGIN_ERROR")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, error_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    await db.refresh(connection)
+    assert connection.status == "error"
+    assert connection.last_error == "LOGIN_ERROR"
+    assert connection.last_synced_at == seeded_last_synced_at
+
+
+async def test_sync_workspace_recovery_after_item_error_uses_pre_outage_last_synced_at(db, initialized_instance):
+    """Finding 1, recovery half: once the login is repaired (status back to
+    UPDATED), the overlap window must be computed from the timestamp of the
+    last UPDATED round — not from "now" — so nothing that posted during the
+    outage is skipped."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+
+    ok_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, ok_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    connection.last_synced_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    await db.commit()
+
+    error_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="LOGIN_ERROR")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, error_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+
+    recovery_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, recovery_provider).sync_workspace(ws_id, today=TODAY)
+
+    expected_from = date(2026, 9, 1) - timedelta(days=SYNC_OVERLAP_DAYS)
+    assert recovery_provider.transaction_calls == [("acc-1", expected_from)]
+
+
 # --------------------------------------------------------------------------- #
 # reconcile / unlink / delete_connection / mappings
 # --------------------------------------------------------------------------- #
