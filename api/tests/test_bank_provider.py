@@ -207,6 +207,56 @@ async def test_pagination_follows_next_as_a_bare_token():
     assert [c.item_id for c in result] == ["i1", "i2"]
 
 
+async def test_pagination_follows_next_as_bare_query_string_without_question_mark():
+    """Pluggy pagination `next` can be a bare query string like "after=tok-3"
+    (without the leading "?"). This must be parsed robustly without leaking
+    a raw KeyError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        if "after" not in params:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
+                    "next": "after=tok-3",
+                },
+            )
+        assert params["after"] == "tok-3"
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "i2", "status": "OUTDATED", "connector": {"name": "B"}}],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_connections()
+    assert [c.item_id for c in result] == ["i1", "i2"]
+
+
+async def test_pagination_terminates_when_next_key_is_missing():
+    """Pagination should terminate when the response has no 'next' key at all,
+    same as if next is null."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_connections()
+    assert [c.item_id for c in result] == ["i1"]
+
+
 async def test_pagination_first_page_requests_page_size_500():
     seen_params = {}
 

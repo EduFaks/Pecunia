@@ -83,8 +83,14 @@ def _extract_after(next_value: str) -> str:
     string, or (in principle) a bare cursor token. Pull the `after` value out
     robustly rather than assuming one shape."""
     if "after=" in next_value:
-        query = urlsplit(next_value).query
-        return parse_qs(query)["after"][0]
+        # Try to extract from urlsplit's query component. If that's empty
+        # (e.g., "after=tok-3" without "?"), fall back to the whole string.
+        query = urlsplit(next_value).query or next_value
+        # Use .get() to avoid KeyError; treat empty or missing as the bare token.
+        after_list = parse_qs(query).get("after")
+        if after_list:
+            return after_list[0]
+        return next_value
     return next_value
 
 
@@ -166,7 +172,13 @@ class PluggyProvider:
             next_value = page.get("next")
             if not next_value:
                 break
-            query = {**params, "after": _extract_after(next_value)}
+            try:
+                after_token = _extract_after(next_value)
+            except (KeyError, ValueError, TypeError) as exc:
+                raise BankProviderError(
+                    f"Pluggy pagination cursor parsing failed for {path}: {exc}"
+                ) from exc
+            query = {**params, "after": after_token}
         return results
 
     async def fetch_connections(self) -> list[ProviderConnection]:
