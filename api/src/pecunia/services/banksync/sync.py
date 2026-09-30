@@ -319,17 +319,24 @@ class BankSyncService:
                             connection.last_synced_at.date() - timedelta(days=SYNC_OVERLAP_DAYS),
                         )
                     provider_account = provider_accounts_by_id.get(link.pluggy_account_id)
+                    # Import FIRST, only then adopt the provider's reported
+                    # balance/card fields — writing them before a successful
+                    # import would let a raised _sync_link leave a flushed
+                    # balance on a link whose transactions were never
+                    # actually fetched, opening a false divergence that
+                    # Reconcile "fixes" and the next real sync double-counts
+                    # (finding 2).
+                    link_created, link_skipped = await self._sync_link(
+                        link, from_date=window_start, today=today
+                    )
+                    created += link_created
+                    skipped += link_skipped
                     if provider_account is not None:
                         link.provider_balance_minor = provider_account.balance_minor
                         link.provider_balance_as_of = datetime.now(UTC)
                         link.credit_limit_minor = provider_account.credit_limit_minor
                         link.bill_close_date = provider_account.bill_close_date
                         link.bill_due_date = provider_account.bill_due_date
-                    link_created, link_skipped = await self._sync_link(
-                        link, from_date=window_start, today=today
-                    )
-                    created += link_created
-                    skipped += link_skipped
 
                 item_status = status_by_item.get(connection.pluggy_item_id)
                 connection.status = (

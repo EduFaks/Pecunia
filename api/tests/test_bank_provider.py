@@ -663,3 +663,13 @@ async def test_fake_bank_provider_raise_for_items_only_affects_that_item():
     assert await fake.fetch_accounts("item-ok") == []
     with pytest.raises(BankProviderError):
         await fake.fetch_accounts("item-bad")
+
+
+async def test_fake_bank_provider_raise_for_accounts_only_affects_that_account():
+    fake = FakeBankProvider(
+        transactions_by_account={"acc-ok": [], "acc-bad": []},
+        raise_for_accounts={"acc-bad"},
+    )
+    assert await fake.fetch_transactions("acc-ok", from_date=date(2026, 1, 1)) == []
+    with pytest.raises(BankProviderError):
+        await fake.fetch_transactions("acc-bad", from_date=date(2026, 1, 1))

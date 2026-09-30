@@ -531,6 +531,31 @@ async def test_sync_workspace_refreshes_card_fields_on_each_run(db, initialized_
     assert link.bill_due_date == date(2026, 10, 8)
 
 
+async def test_sync_workspace_failed_link_import_does_not_write_new_provider_balance(db, initialized_instance):
+    """Finding 2: `_sync_link` raising must not leave the freshly-read
+    provider balance/card fields flushed — otherwise the except handler
+    commits a balance the sync never actually confirmed by importing,
+    Reconcile "fixes" a gap that isn't real, and the next successful sync
+    then double-counts those same transactions."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    link = await _link(
+        db, ws_id, connection, account, sync_from=date(2026, 1, 1), provider_balance_minor=100_00,
+    )
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=999_00)]},
+        raise_for_accounts={"acc-1"},
+    )
+    svc = BankSyncService(db, provider)
+    result = await svc.sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    assert len(result["errors"]) == 1
+    await db.refresh(link)
+    assert link.provider_balance_minor == 100_00
+
+
 async def test_sync_workspace_isolates_one_connection_error_from_the_other(db, initialized_instance):
     ws_id = initialized_instance["workspace_id"]
     account_ok = await _account(db, ws_id, currency="BRL", name="OK")

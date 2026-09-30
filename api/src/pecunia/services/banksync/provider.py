@@ -261,7 +261,10 @@ class FakeBankProvider:
     sync-service test can assert "one call per linked account, from the
     right date" without a mocking framework. `raise_all=True` makes every
     method raise `BankProviderError`; `raise_for_items` does the same for
-    `fetch_accounts` calls naming one of those item ids specifically."""
+    `fetch_accounts` calls naming one of those item ids specifically;
+    `raise_for_accounts` does the same for `fetch_transactions` calls naming
+    one of those pluggy_account_ids specifically (simulates one link's
+    import failing without touching its siblings)."""
 
     def __init__(
         self,
@@ -271,12 +274,14 @@ class FakeBankProvider:
         transactions_by_account: dict[str, list[ProviderTransaction]] | None = None,
         raise_all: bool = False,
         raise_for_items: set[str] | None = None,
+        raise_for_accounts: set[str] | None = None,
     ):
         self._connections = connections or []
         self._accounts_by_item = accounts_by_item or {}
         self._transactions_by_account = transactions_by_account or {}
         self._raise_all = raise_all
         self._raise_for_items = raise_for_items or set()
+        self._raise_for_accounts = raise_for_accounts or set()
         self.transaction_calls: list[tuple[str, date]] = []
 
     async def fetch_connections(self) -> list[ProviderConnection]:
@@ -293,7 +298,7 @@ class FakeBankProvider:
         self, pluggy_account_id: str, *, from_date: date
     ) -> list[ProviderTransaction]:
         self.transaction_calls.append((pluggy_account_id, from_date))
-        if self._raise_all:
+        if self._raise_all or pluggy_account_id in self._raise_for_accounts:
             raise BankProviderError(f"fake provider failure for account {pluggy_account_id}")
         rows = self._transactions_by_account.get(pluggy_account_id, [])
         return [row for row in rows if row.date >= from_date]
