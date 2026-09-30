@@ -1,8 +1,10 @@
 import uuid
+from datetime import date
 
 import sqlalchemy as sa
 
-from pecunia.models import PALETTE, ActivityEntry, AuditEvent
+from pecunia.models import PALETTE, Account, ActivityEntry, AuditEvent
+from pecunia.services.transactions import TransactionService
 
 LOGIN = {"email": "owner@example.com", "password": "correct horse battery staple"}
 
@@ -970,3 +972,114 @@ async def test_list_search_is_workspace_scoped(client, initialized_instance, use
     theirs_lst = (await client.get("/api/v1/transactions", params={"q": "zebratoken"}, headers=other_h)).json()
     assert [t["id"] for t in mine_lst["items"]] == [mine["id"]]
     assert [t["id"] for t in theirs_lst["items"]] == [theirs["id"]]
+
+
+# --- Track T (bank sync): TransactionService.create(external_id=...) --------
+
+
+async def _svc_account(db, ws_id, *, currency="BRL", name="Checking"):
+    account = Account(id=uuid.uuid4(), workspace_id=ws_id, name=name, type="checking", currency=currency)
+    db.add(account)
+    await db.flush()
+    return account
+
+
+async def test_create_with_external_id_persists_it_and_emits_imported(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=account.id,
+        amount_minor=-1500,
+        currency="BRL",
+        description="Synced purchase",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-tx-1",
+    )
+    assert tx.external_id == "pluggy-tx-1"
+
+    actions = (await db.execute(sa.select(AuditEvent.action))).scalars().all()
+    assert "transaction.imported" in actions
+    assert "transaction.created" not in actions
+    templates = (await db.execute(sa.select(ActivityEntry.template_key))).scalars().all()
+    assert "activity.transaction.imported" in templates
+    assert "activity.transaction.created" not in templates
+
+
+async def test_create_without_external_id_still_emits_created(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=account.id,
+        amount_minor=-1500,
+        currency="BRL",
+        description="Manual entry",
+        occurred_on=date(2026, 9, 11),
+    )
+    assert tx.external_id is None
+
+    actions = (await db.execute(sa.select(AuditEvent.action))).scalars().all()
+    assert "transaction.created" in actions
+    assert "transaction.imported" not in actions
+    templates = (await db.execute(sa.select(ActivityEntry.template_key))).scalars().all()
+    assert "activity.transaction.created" in templates
+    assert "activity.transaction.imported" not in templates
+
+
+async def test_get_and_list_return_is_imported_flag(client, initialized_instance, db):
+    h = await _auth(client)
+    acc = await _account(client, h)
+    manual = (await client.post("/api/v1/transactions", json=_tx_body(acc["id"]), headers=h)).json()
+    assert manual["is_imported"] is False
+
+    ws_id = initialized_instance["workspace_id"]
+    svc = TransactionService(db)
+    imported = await svc.create(
+        ws_id,
+        account_id=uuid.UUID(acc["id"]),
+        amount_minor=-2000,
+        currency="BRL",
+        description="Synced tx",
+        occurred_on=date(2026, 9, 12),
+        external_id="pluggy-xyz",
+    )
+    await db.commit()
+
+    got = (await client.get(f"/api/v1/transactions/{imported.id}", headers=h)).json()
+    assert got["is_imported"] is True
+
+    lst = (await client.get("/api/v1/transactions", headers=h)).json()
+    by_id = {t["id"]: t for t in lst["items"]}
+    assert by_id[str(imported.id)]["is_imported"] is True
+    assert by_id[manual["id"]]["is_imported"] is False
+
+
+async def test_duplicate_external_id_same_account_raises_integrity_error(db, initialized_instance):
+    import pytest
+
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    await svc.create(
+        ws_id,
+        account_id=account.id,
+        amount_minor=-1000,
+        currency="BRL",
+        description="First sync",
+        occurred_on=date(2026, 9, 11),
+        external_id="dup-ext-1",
+    )
+    with pytest.raises(sa.exc.IntegrityError):
+        await svc.create(
+            ws_id,
+            account_id=account.id,
+            amount_minor=-2000,
+            currency="BRL",
+            description="Duplicate sync",
+            occurred_on=date(2026, 9, 12),
+            external_id="dup-ext-1",
+        )
+    await db.rollback()

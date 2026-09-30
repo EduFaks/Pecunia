@@ -13,7 +13,7 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     "transaction": frozenset(
         {
             "id", "account_id", "category_id", "contact_id", "project_id", "transfer_id",
-            "amount_minor", "currency", "description", "occurred_on", "is_demo",
+            "amount_minor", "currency", "description", "occurred_on", "is_demo", "external_id",
         }
     ),
     "transfer": frozenset(

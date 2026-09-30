@@ -72,6 +72,7 @@ class TransactionOut(BaseModel):
     description: str
     occurred_on: date
     is_demo: bool
+    is_imported: bool
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -90,6 +91,7 @@ class TransactionOut(BaseModel):
             description=transaction.description,
             occurred_on=transaction.occurred_on,
             is_demo=transaction.is_demo,
+            is_imported=transaction.external_id is not None,
             deleted_at=transaction.deleted_at,
             created_at=transaction.created_at,
             updated_at=transaction.updated_at,
