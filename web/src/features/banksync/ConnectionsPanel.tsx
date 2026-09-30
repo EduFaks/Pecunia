@@ -190,7 +190,7 @@ function ConnectionsPanel() {
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-sm text-ink-faint">
-                      Status: <span className={connection.status === "ok" ? "text-emerald-12" : "text-coral-12"}>
+                      Status: <span className={connection.status === "ok" ? "text-positive" : "text-negative"}>
                         {connection.status === "ok" ? "Connected" : "Error"}
                       </span>
                     </p>
@@ -200,7 +200,7 @@ function ConnectionsPanel() {
                       </p>
                     ) : null}
                     {connection.last_error ? (
-                      <p className="mt-1 font-mono text-xs text-coral-12">
+                      <p className="mt-1 font-mono text-xs text-negative">
                         Error: {connection.last_error}
                       </p>
                     ) : null}

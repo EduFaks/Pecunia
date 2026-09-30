@@ -147,6 +147,19 @@ describe("ConnectionsPanel", () => {
     expect(screen.getByText("Savings")).toBeInTheDocument();
   });
 
+  it("uses the project's real semantic color tokens for connection status", async () => {
+    // Finding 11: `text-emerald-12`/`text-coral-12` aren't tokens this
+    // project defines (grep shows `text-positive`/`text-negative` used
+    // everywhere else for this exact "good/bad" semantic) — a class that
+    // doesn't exist renders as literally no color, so the "Connected"/
+    // "Error" text is indistinguishable from any other muted label.
+    renderPanel();
+
+    const statusText = await screen.findByText("Connected");
+    expect(statusText).toHaveClass("text-positive");
+    expect(statusText.className).not.toMatch(/emerald|coral/);
+  });
+
   it("shows a divergence badge only when provider and derived balances differ", async () => {
     renderPanel();
 
