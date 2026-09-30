@@ -120,6 +120,20 @@ async def _actions(db) -> list[str]:
     return (await db.execute(sa.select(AuditEvent.action))).scalars().all()
 
 
+def _capture_sql(engine, statements: list[str]):
+    """Registers a `before_cursor_execute` listener on `engine`'s underlying
+    sync engine that appends every statement string sent to the DB driver
+    into `statements`. Returns the listener so the caller can remove it —
+    used to assert a row lock (`FOR UPDATE`) was actually taken, not just
+    that behavior happens to look race-safe (finding 3)."""
+
+    def _listener(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    sa.event.listen(engine.sync_engine, "before_cursor_execute", _listener)
+    return _listener
+
+
 # --------------------------------------------------------------------------- #
 # link_account
 # --------------------------------------------------------------------------- #
@@ -323,6 +337,32 @@ async def test_link_account_anchors_initial_balance_after_first_import(db, initi
     actions = await _actions(db)
     assert Actions.ACCOUNT_BALANCE_RECONCILED in actions
     assert Actions.TRANSACTION_IMPORTED in actions
+
+
+async def test_link_account_anchor_step_locks_the_account_row(db, engine, initialized_instance):
+    """Finding 3: the anchor's balance()-then-write on the Account row must
+    take `SELECT ... FOR UPDATE` — otherwise a racing reconcile()/link_account
+    reading the same not-yet-committed balance can double-adjust it."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL", initial_balance_minor=250_00)
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=500_00)]},
+        transactions_by_account={"acc-1": [_tx_row("tx-1", amount_minor=-100_00)]},
+    )
+    svc = BankSyncService(db, provider)
+
+    statements: list[str] = []
+    listener = _capture_sql(engine, statements)
+    try:
+        await svc.link_account(
+            ws_id, pluggy_item_id="item-1", pluggy_account_id="acc-1",
+            sync_from=date(2026, 1, 1), today=TODAY, account_id=account.id,
+        )
+    finally:
+        sa.event.remove(engine.sync_engine, "before_cursor_execute", listener)
+
+    assert any("FOR UPDATE" in s.upper() and "accounts" in s.lower() for s in statements)
 
 
 async def test_link_account_updates_connection_status_and_last_synced_at(db, initialized_instance):
@@ -774,6 +814,47 @@ async def test_reconcile_posts_exactly_the_gap_then_balance_matches(db, initiali
     assert balance == 500_00
     actions = await _actions(db)
     assert Actions.ACCOUNT_BALANCE_RECONCILED in actions
+
+
+async def test_reconcile_locks_the_account_row(db, engine, initialized_instance):
+    """Finding 3: reconcile()'s balance()-then-write must take
+    `SELECT ... FOR UPDATE` on the Account row — a double-clicked Reconcile,
+    or one racing the daily sync job, must serialize rather than both reading
+    the same stale balance and posting two adjustments."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL", initial_balance_minor=100_00)
+    connection = await _connection(db, ws_id)
+    link = await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1), provider_balance_minor=500_00)
+    svc = BankSyncService(db, FakeBankProvider())
+
+    statements: list[str] = []
+    listener = _capture_sql(engine, statements)
+    try:
+        await svc.reconcile(ws_id, link.id, today=TODAY)
+    finally:
+        sa.event.remove(engine.sync_engine, "before_cursor_execute", listener)
+
+    assert any("FOR UPDATE" in s.upper() and "accounts" in s.lower() for s in statements)
+
+
+async def test_reconcile_twice_in_a_row_posts_only_one_adjustment(db, initialized_instance):
+    """Belt-and-braces alongside the FOR-UPDATE assertion above: even without
+    a real race, calling reconcile() a second time right after the first
+    must see the already-closed gap and post nothing more."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL", initial_balance_minor=100_00)
+    connection = await _connection(db, ws_id)
+    link = await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1), provider_balance_minor=500_00)
+    svc = BankSyncService(db, FakeBankProvider())
+
+    first = await svc.reconcile(ws_id, link.id, today=TODAY)
+    await db.commit()
+    assert first is not None
+    assert first.amount_minor == 400_00
+
+    second = await svc.reconcile(ws_id, link.id, today=TODAY)
+    await db.commit()
+    assert second is None
 
 
 async def test_reconcile_returns_none_when_gap_is_zero(db, initialized_instance):

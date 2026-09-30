@@ -252,6 +252,19 @@ class BankSyncService:
 
         # 7. Anchor ONCE, after importing (never before — anchoring first
         # would double-count the transactions about to be imported).
+        # Row-locked: a link_account racing another mutation of this same
+        # account (e.g. a concurrent reconcile()) must not read a
+        # not-yet-committed balance and compute a stale adjustment (finding
+        # 3). `populate_existing` refreshes `account` in place with the
+        # locked, possibly-newer column values.
+        account = (
+            await self.db.execute(
+                scoped_select(Account, workspace_id)
+                .where(Account.id == account.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
         account_svc = AccountService(self.db)
         # AccountService.balance() sums a Postgres numeric (SUM(bigint)) and
         # comes back as Decimal — coerce to a plain int before it touches
@@ -501,7 +514,21 @@ class BankSyncService:
         link = await get_scoped(self.db, BankAccountLink, link_id, workspace_id)
         if link is None:
             raise LinkNotFoundError()
-        account = await get_scoped(self.db, Account, link.account_id, workspace_id)
+        # Row-locked: a double-clicked Reconcile, or one racing the daily
+        # sync job's own anchor step, must serialize on this Account row
+        # rather than both reading the same pre-adjustment balance and each
+        # posting their own "gap" (finding 3). `populate_existing` ensures we
+        # see the lock-winner's committed values, not a stale snapshot.
+        account = (
+            await self.db.execute(
+                scoped_select(Account, workspace_id)
+                .where(Account.id == link.account_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if account is None:
+            raise LinkNotFoundError()
         account_svc = AccountService(self.db)
         balance = int(await account_svc.balance(account))
         gap = (link.provider_balance_minor or 0) - balance
