@@ -636,6 +636,52 @@ async def test_sync_workspace_isolates_one_connection_error_from_the_other(db, i
     assert Actions.BANK_SYNC_FAILED in actions
 
 
+async def test_sync_workspace_currency_mismatch_on_one_link_does_not_abort_the_other_link(
+    db, initialized_instance
+):
+    """Finding 7: a CurrencyMismatchError from one link's import (e.g. one FX
+    transaction posted against a card whose account currency doesn't match)
+    must not propagate out of sync_workspace and kill every other link/
+    connection — it must isolate to that one link, same as a BankProviderError
+    does, and the connection's last_synced_at must not advance."""
+    ws_id = initialized_instance["workspace_id"]
+    account_good = await _account(db, ws_id, currency="BRL", name="Good")
+    account_bad = await _account(db, ws_id, currency="BRL", name="Bad")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account_good, pluggy_account_id="acc-good", sync_from=date(2026, 1, 1))
+    await _link(db, ws_id, connection, account_bad, pluggy_account_id="acc-bad", sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={
+            "item-1": [
+                _bank_account(pluggy_account_id="acc-good", currency="BRL", balance_minor=0),
+                _bank_account(pluggy_account_id="acc-bad", currency="BRL", balance_minor=0),
+            ]
+        },
+        transactions_by_account={
+            "acc-good": [_tx_row("tx-good", days_ago=1, currency="BRL")],
+            # An FX transaction posted in USD against a BRL-linked account —
+            # TransactionService.create's currency-vs-account check raises.
+            "acc-bad": [_tx_row("tx-fx", days_ago=1, currency="USD")],
+        },
+    )
+    svc = BankSyncService(db, provider)
+    result = await svc.sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+
+    assert result["created"] == 1
+    assert len(result["errors"]) == 1
+
+    good_tx = await db.scalar(sa.select(Transaction).where(Transaction.external_id == "tx-good"))
+    assert good_tx is not None
+    bad_tx = await db.scalar(sa.select(Transaction).where(Transaction.external_id == "tx-fx"))
+    assert bad_tx is None
+
+    await db.refresh(connection)
+    assert connection.status == "error"
+    assert connection.last_synced_at is None
+
+
 async def test_sync_workspace_failed_round_does_not_advance_last_synced_at(db, initialized_instance):
     ws_id = initialized_instance["workspace_id"]
     account = await _account(db, ws_id, currency="BRL")
@@ -724,6 +770,53 @@ async def test_sync_workspace_item_login_error_marks_connection_error_with_raw_s
     await db.refresh(connection)
     assert connection.status == "error"
     assert connection.last_error == "LOGIN_ERROR"
+
+
+async def test_sync_workspace_item_updating_status_maps_to_ok_but_does_not_advance_last_synced_at(
+    db, initialized_instance
+):
+    """Finding 10: UPDATING (Pluggy still refreshing the item) is transient,
+    not an error — the connection must read as "ok", not show an error
+    badge — but per finding 1's rule only an exactly-UPDATED round is a
+    genuinely fresh fetch, so last_synced_at must not advance on UPDATING."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATING")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    svc = BankSyncService(db, provider)
+    await svc.sync_workspace(ws_id, today=TODAY)
+    await db.refresh(connection)
+    assert connection.status == "ok"
+    assert connection.last_error is None
+    assert connection.last_synced_at is None
+
+
+async def test_sync_workspace_item_missing_from_provider_listing_marks_item_not_found(
+    db, initialized_instance
+):
+    """Finding 10: a stored connection whose item has vanished from the
+    provider's own listing (e.g. the user removed it directly in Pluggy)
+    must show a specific, non-empty error rather than an empty message."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[],  # item-1 no longer appears in fetch_connections at all
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    svc = BankSyncService(db, provider)
+    await svc.sync_workspace(ws_id, today=TODAY)
+    await db.refresh(connection)
+    assert connection.status == "error"
+    assert connection.last_error == "ITEM_NOT_FOUND"
+    assert connection.last_synced_at is None
 
 
 async def test_sync_workspace_item_error_status_does_not_advance_last_synced_at(db, initialized_instance):
