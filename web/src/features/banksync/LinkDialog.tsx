@@ -39,6 +39,13 @@ function discoveredKey(flat: FlatDiscoveredAccount): string {
  * an existing Pecunia account (filtered to the same currency as the
  * discovered account) or create new. Handles 503 discovery gracefully.
  */
+/** Today's date as an ISO `YYYY-MM-DD` string — the default (and, absent
+ * user input, the only) value `sync_from` ever took before finding 13's
+ * fix. Kept as a helper so the initial state and the post-link reset agree. */
+function todayIsoDate(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
 function LinkDialog({ open, onClose }: LinkDialogProps) {
   const { showToast } = useToast();
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -47,6 +54,10 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
   const [createMode, setCreateMode] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
   const [discoveryUnavailable, setDiscoveryUnavailable] = useState(false);
+  // The user picks the sync start date at link time — default today, but
+  // never locked to it (finding 13: a locked decision was rendering NO date
+  // input at all).
+  const [syncFrom, setSyncFrom] = useState(todayIsoDate);
 
   const accountsQuery = useQuery({
     queryKey: [...qk.accounts, "flat"],
@@ -64,6 +75,7 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
     setCreateMode(false);
     setNewAccountName("");
     setDiscoveryUnavailable(false);
+    setSyncFrom(todayIsoDate());
     onClose();
   }, [onClose]);
 
@@ -117,7 +129,7 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
       const payload = {
         pluggy_item_id: selectedDiscovered.itemId,
         pluggy_account_id: selectedDiscovered.account.pluggy_account_id,
-        sync_from: new Date().toISOString().split("T")[0],
+        sync_from: syncFrom,
         ...(createMode
           ? {
               new_account: {
@@ -263,6 +275,23 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
               >
                 Back
               </Button>
+            </div>
+          ) : null}
+
+          {/* Sync start date — user-editable, defaults to today (finding 13:
+              this used to be silently locked to today with no input). */}
+          {selectedDiscovered ? (
+            <div className="flex flex-col gap-3">
+              <label htmlFor="sync-from" className="block font-mono text-xs uppercase tracking-[0.15em] text-ink-faint">
+                Sync From
+              </label>
+              <input
+                id="sync-from"
+                type="date"
+                className="rounded-pc border border-hairline bg-surface-0 px-3 py-2 text-sm text-ink"
+                value={syncFrom}
+                onChange={(e) => setSyncFrom(e.target.value)}
+              />
             </div>
           ) : null}
         </div>

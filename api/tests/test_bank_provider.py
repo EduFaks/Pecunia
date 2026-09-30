@@ -271,6 +271,81 @@ async def test_pagination_first_page_requests_page_size_500():
     assert seen_params["pageSize"] == "500"
 
 
+async def test_pagination_second_page_request_still_carries_page_size_500():
+    """Finding 9: the `after` param must not replace `pageSize` on later
+    pages — dropping it lets Pluggy fall back to its own (much smaller)
+    default page size, ballooning the number of requests."""
+    seen_page_sizes = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        seen_page_sizes.append(params.get("pageSize"))
+        if "after" not in params:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
+                    "next": "?after=tok-1&pageSize=500",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "i2", "status": "UPDATED", "connector": {"name": "B"}}],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    await provider.fetch_connections()
+    assert seen_page_sizes == ["500", "500"]
+
+
+async def test_pagination_repeated_cursor_raises_bank_provider_error():
+    """Finding 9: a `next` cursor that never advances (Pluggy returning the
+    same `after` token again) must not spin forever — it's a provider
+    misbehavior, surfaced as a BankProviderError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
+                "next": "?after=tok-stuck&pageSize=500",
+            },
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connections()
+
+
+async def test_pagination_exceeding_page_cap_raises_bank_provider_error():
+    """Finding 9: even a cursor that keeps legitimately advancing must not
+    loop unbounded — a page cap guards against a runaway or malicious feed."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        calls["n"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": f"i{calls['n']}", "status": "UPDATED", "connector": {"name": "A"}}],
+                "next": f"?after=tok-{calls['n']}&pageSize=500",
+            },
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connections()
+
+
 # --------------------------------------------------------------------------- #
 # fetch_connections — missing connector fallback
 # --------------------------------------------------------------------------- #
@@ -370,6 +445,81 @@ async def test_fetch_accounts_negates_credit_card_balance_and_maps_credit_data()
     assert account.credit_limit_minor == 500_000
     assert account.bill_close_date == date(2026, 9, 20)
     assert account.bill_due_date == date(2026, 9, 27)
+
+
+async def test_fetch_accounts_tolerates_partial_credit_data_with_null_limit():
+    """Finding 8: a creditData object with some members null (e.g. Pluggy
+    hasn't reported a credit limit yet) must not crash — each of
+    limit/close/due is independently optional."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "acc-partial",
+                        "type": "CREDIT",
+                        "subtype": "CREDIT_CARD",
+                        "name": "Card",
+                        "number": "2222",
+                        "balance": 100.0,
+                        "currencyCode": "BRL",
+                        "creditData": {
+                            "creditLimit": None,
+                            "balanceCloseDate": "2026-09-20T00:00:00.000Z",
+                            "balanceDueDate": "2026-09-27T00:00:00.000Z",
+                        },
+                    }
+                ]
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_accounts("item-partial")
+    account = result[0]
+    assert account.credit_limit_minor is None
+    assert account.bill_close_date == date(2026, 9, 20)
+    assert account.bill_due_date == date(2026, 9, 27)
+
+
+async def test_fetch_accounts_tolerates_partial_credit_data_with_null_dates():
+    """Finding 8: the close/due dates can independently be null (e.g. a
+    limit is known but the current billing cycle hasn't been computed yet)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "acc-partial-2",
+                        "type": "CREDIT",
+                        "subtype": "CREDIT_CARD",
+                        "name": "Card",
+                        "number": "3333",
+                        "balance": 100.0,
+                        "currencyCode": "BRL",
+                        "creditData": {
+                            "creditLimit": 1000.0,
+                            "balanceCloseDate": None,
+                            "balanceDueDate": None,
+                        },
+                    }
+                ]
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_accounts("item-partial-2")
+    account = result[0]
+    assert account.credit_limit_minor == 100_000
+    assert account.bill_close_date is None
+    assert account.bill_due_date is None
 
 
 async def test_fetch_accounts_missing_number_is_none():
@@ -663,3 +813,13 @@ async def test_fake_bank_provider_raise_for_items_only_affects_that_item():
     assert await fake.fetch_accounts("item-ok") == []
     with pytest.raises(BankProviderError):
         await fake.fetch_accounts("item-bad")
+
+
+async def test_fake_bank_provider_raise_for_accounts_only_affects_that_account():
+    fake = FakeBankProvider(
+        transactions_by_account={"acc-ok": [], "acc-bad": []},
+        raise_for_accounts={"acc-bad"},
+    )
+    assert await fake.fetch_transactions("acc-ok", from_date=date(2026, 1, 1)) == []
+    with pytest.raises(BankProviderError):
+        await fake.fetch_transactions("acc-bad", from_date=date(2026, 1, 1))

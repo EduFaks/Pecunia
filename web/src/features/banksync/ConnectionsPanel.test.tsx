@@ -45,6 +45,7 @@ const BANK_LINK_2: BankLinkOut = {
 
 const CONNECTION: BankConnectionOut = {
   id: "conn1",
+  institution_name: "Banco do Brasil",
   status: "ok",
   last_error: null,
   last_synced_at: "2026-09-30T10:00:00Z",
@@ -145,6 +146,60 @@ describe("ConnectionsPanel", () => {
 
     expect(await screen.findByText("Checking")).toBeInTheDocument();
     expect(screen.getByText("Savings")).toBeInTheDocument();
+  });
+
+  it("renders each connection's institution name so multiple banks are distinguishable", async () => {
+    // Finding 12: `institution_name` was missing from `BankConnectionOut`
+    // on the frontend, so with 2+ linked banks the cards were
+    // indistinguishable (just "Connected" / "Error" repeated). Two
+    // connections here, each with its own institution_name, must both be
+    // visible on the page.
+    const secondConnection: BankConnectionOut = {
+      ...CONNECTION,
+      id: "conn2",
+      institution_name: "Nubank",
+      links: [],
+    };
+    mockApiFetch.mockImplementation((path: string, opts?: { method?: string; json?: unknown }) => {
+      const method = opts?.method ?? "GET";
+      if (path === "/auth/me") {
+        return Promise.resolve({ user: null, preferences: null });
+      }
+      if (path.startsWith("/bank-sync/connections") && method === "GET") {
+        return Promise.resolve([CONNECTION, secondConnection]);
+      }
+      if (path.startsWith("/bank-sync/category-mappings") && method === "GET") {
+        return Promise.resolve([]);
+      }
+      if (path.startsWith("/categories") && method === "GET") {
+        return Promise.resolve({ items: [], next_cursor: null });
+      }
+      if (path.startsWith("/bank-sync/discovery") && method === "GET") {
+        return Promise.resolve([]);
+      }
+      if (path.startsWith("/accounts") && method === "GET") {
+        return Promise.resolve({ items: [], next_cursor: null });
+      }
+      return Promise.reject(new Error(`unexpected call: ${method} ${path}`));
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText("Banco do Brasil")).toBeInTheDocument();
+    expect(await screen.findByText("Nubank")).toBeInTheDocument();
+  });
+
+  it("uses the project's real semantic color tokens for connection status", async () => {
+    // Finding 11: `text-emerald-12`/`text-coral-12` aren't tokens this
+    // project defines (grep shows `text-positive`/`text-negative` used
+    // everywhere else for this exact "good/bad" semantic) — a class that
+    // doesn't exist renders as literally no color, so the "Connected"/
+    // "Error" text is indistinguishable from any other muted label.
+    renderPanel();
+
+    const statusText = await screen.findByText("Connected");
+    expect(statusText).toHaveClass("text-positive");
+    expect(statusText.className).not.toMatch(/emerald|coral/);
   });
 
   it("shows a divergence badge only when provider and derived balances differ", async () => {

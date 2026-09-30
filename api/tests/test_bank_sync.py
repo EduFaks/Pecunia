@@ -5,6 +5,7 @@ provider's reported balance, and re-syncs on a schedule (dedup by
 external_id, tombstone-aware, per-connection error isolation). Always uses
 `FakeBankProvider` — no real network call in this suite."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -118,6 +119,20 @@ async def _link(db, ws_id, connection, account, *, pluggy_account_id="acc-1", sy
 
 async def _actions(db) -> list[str]:
     return (await db.execute(sa.select(AuditEvent.action))).scalars().all()
+
+
+def _capture_sql(engine, statements: list[str]):
+    """Registers a `before_cursor_execute` listener on `engine`'s underlying
+    sync engine that appends every statement string sent to the DB driver
+    into `statements`. Returns the listener so the caller can remove it —
+    used to assert a row lock (`FOR UPDATE`) was actually taken, not just
+    that behavior happens to look race-safe (finding 3)."""
+
+    def _listener(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    sa.event.listen(engine.sync_engine, "before_cursor_execute", _listener)
+    return _listener
 
 
 # --------------------------------------------------------------------------- #
@@ -325,6 +340,32 @@ async def test_link_account_anchors_initial_balance_after_first_import(db, initi
     assert Actions.TRANSACTION_IMPORTED in actions
 
 
+async def test_link_account_anchor_step_locks_the_account_row(db, engine, initialized_instance):
+    """Finding 3: the anchor's balance()-then-write on the Account row must
+    take `SELECT ... FOR UPDATE` — otherwise a racing reconcile()/link_account
+    reading the same not-yet-committed balance can double-adjust it."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL", initial_balance_minor=250_00)
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=500_00)]},
+        transactions_by_account={"acc-1": [_tx_row("tx-1", amount_minor=-100_00)]},
+    )
+    svc = BankSyncService(db, provider)
+
+    statements: list[str] = []
+    listener = _capture_sql(engine, statements)
+    try:
+        await svc.link_account(
+            ws_id, pluggy_item_id="item-1", pluggy_account_id="acc-1",
+            sync_from=date(2026, 1, 1), today=TODAY, account_id=account.id,
+        )
+    finally:
+        sa.event.remove(engine.sync_engine, "before_cursor_execute", listener)
+
+    assert any("FOR UPDATE" in s.upper() and "accounts" in s.lower() for s in statements)
+
+
 async def test_link_account_updates_connection_status_and_last_synced_at(db, initialized_instance):
     ws_id = initialized_instance["workspace_id"]
     account = await _account(db, ws_id, currency="BRL")
@@ -443,7 +484,11 @@ async def test_sync_workspace_overlap_window_never_earlier_than_sync_from(db, in
     assert provider.transaction_calls == [("acc-1", date(2026, 9, 18))]  # clamped to sync_from
 
 
-async def test_sync_workspace_overlap_window_subtracts_seven_days_from_last_synced(db, initialized_instance):
+async def test_sync_workspace_overlap_window_subtracts_thirty_days_from_last_synced(db, initialized_instance):
+    """Finding 6: the overlap window is 30 days (not 7) — wide enough to
+    catch a PENDING card charge that only POSTs, with an occurred date
+    dated earlier still, well after the previous sync round already passed
+    it (a realistic card-posting delay); dedupe absorbs the re-fetch."""
     ws_id = initialized_instance["workspace_id"]
     account = await _account(db, ws_id, currency="BRL")
     last_synced_at = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
@@ -456,7 +501,7 @@ async def test_sync_workspace_overlap_window_subtracts_seven_days_from_last_sync
     )
     svc = BankSyncService(db, provider)
     await svc.sync_workspace(ws_id, today=TODAY)
-    assert provider.transaction_calls == [("acc-1", date(2026, 9, 13))]  # 2026-09-20 - 7d
+    assert provider.transaction_calls == [("acc-1", date(2026, 8, 21))]  # 2026-09-20 - 30d
 
 
 async def test_sync_workspace_pending_transactions_are_dropped(db, initialized_instance):
@@ -531,6 +576,51 @@ async def test_sync_workspace_refreshes_card_fields_on_each_run(db, initialized_
     assert link.bill_due_date == date(2026, 10, 8)
 
 
+async def test_sync_workspace_failed_link_import_does_not_write_new_provider_balance(db, initialized_instance):
+    """Finding 2: `_sync_link` raising must not leave the freshly-read
+    provider balance/card fields flushed — otherwise the except handler
+    commits a balance the sync never actually confirmed by importing,
+    Reconcile "fixes" a gap that isn't real, and the next successful sync
+    then double-counts those same transactions."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    link = await _link(
+        db, ws_id, connection, account, sync_from=date(2026, 1, 1), provider_balance_minor=100_00,
+    )
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=999_00)]},
+        raise_for_accounts={"acc-1"},
+    )
+    svc = BankSyncService(db, provider)
+    result = await svc.sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    assert len(result["errors"]) == 1
+    await db.refresh(link)
+    assert link.provider_balance_minor == 100_00
+
+
+async def test_sync_workspace_logs_a_warning_for_a_failing_connection(db, initialized_instance, caplog):
+    """Finding 14: a Pluggy failure during the daily/manual sync must be
+    visible in operational logs (e.g. `docker logs`), not just swallowed
+    into errors[]/last_error — a warning naming the failing item id."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id, pluggy_item_id="item-broken")
+    await _link(db, ws_id, connection, account, pluggy_account_id="acc-1", sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-broken", institution_name="Bank", status="UPDATED")],
+        raise_for_items={"item-broken"},
+    )
+    svc = BankSyncService(db, provider)
+    with caplog.at_level(logging.WARNING):
+        await svc.sync_workspace(ws_id, today=TODAY)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("item-broken" in r.getMessage() for r in warnings)
+
+
 async def test_sync_workspace_isolates_one_connection_error_from_the_other(db, initialized_instance):
     ws_id = initialized_instance["workspace_id"]
     account_ok = await _account(db, ws_id, currency="BRL", name="OK")
@@ -565,6 +655,52 @@ async def test_sync_workspace_isolates_one_connection_error_from_the_other(db, i
     actions = await _actions(db)
     assert Actions.BANK_SYNC_COMPLETED in actions
     assert Actions.BANK_SYNC_FAILED in actions
+
+
+async def test_sync_workspace_currency_mismatch_on_one_link_does_not_abort_the_other_link(
+    db, initialized_instance
+):
+    """Finding 7: a CurrencyMismatchError from one link's import (e.g. one FX
+    transaction posted against a card whose account currency doesn't match)
+    must not propagate out of sync_workspace and kill every other link/
+    connection — it must isolate to that one link, same as a BankProviderError
+    does, and the connection's last_synced_at must not advance."""
+    ws_id = initialized_instance["workspace_id"]
+    account_good = await _account(db, ws_id, currency="BRL", name="Good")
+    account_bad = await _account(db, ws_id, currency="BRL", name="Bad")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account_good, pluggy_account_id="acc-good", sync_from=date(2026, 1, 1))
+    await _link(db, ws_id, connection, account_bad, pluggy_account_id="acc-bad", sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={
+            "item-1": [
+                _bank_account(pluggy_account_id="acc-good", currency="BRL", balance_minor=0),
+                _bank_account(pluggy_account_id="acc-bad", currency="BRL", balance_minor=0),
+            ]
+        },
+        transactions_by_account={
+            "acc-good": [_tx_row("tx-good", days_ago=1, currency="BRL")],
+            # An FX transaction posted in USD against a BRL-linked account —
+            # TransactionService.create's currency-vs-account check raises.
+            "acc-bad": [_tx_row("tx-fx", days_ago=1, currency="USD")],
+        },
+    )
+    svc = BankSyncService(db, provider)
+    result = await svc.sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+
+    assert result["created"] == 1
+    assert len(result["errors"]) == 1
+
+    good_tx = await db.scalar(sa.select(Transaction).where(Transaction.external_id == "tx-good"))
+    assert good_tx is not None
+    bad_tx = await db.scalar(sa.select(Transaction).where(Transaction.external_id == "tx-fx"))
+    assert bad_tx is None
+
+    await db.refresh(connection)
+    assert connection.status == "error"
+    assert connection.last_synced_at is None
 
 
 async def test_sync_workspace_failed_round_does_not_advance_last_synced_at(db, initialized_instance):
@@ -657,6 +793,126 @@ async def test_sync_workspace_item_login_error_marks_connection_error_with_raw_s
     assert connection.last_error == "LOGIN_ERROR"
 
 
+async def test_sync_workspace_item_updating_status_maps_to_ok_but_does_not_advance_last_synced_at(
+    db, initialized_instance
+):
+    """Finding 10: UPDATING (Pluggy still refreshing the item) is transient,
+    not an error — the connection must read as "ok", not show an error
+    badge — but per finding 1's rule only an exactly-UPDATED round is a
+    genuinely fresh fetch, so last_synced_at must not advance on UPDATING."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATING")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    svc = BankSyncService(db, provider)
+    await svc.sync_workspace(ws_id, today=TODAY)
+    await db.refresh(connection)
+    assert connection.status == "ok"
+    assert connection.last_error is None
+    assert connection.last_synced_at is None
+
+
+async def test_sync_workspace_item_missing_from_provider_listing_marks_item_not_found(
+    db, initialized_instance
+):
+    """Finding 10: a stored connection whose item has vanished from the
+    provider's own listing (e.g. the user removed it directly in Pluggy)
+    must show a specific, non-empty error rather than an empty message."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[],  # item-1 no longer appears in fetch_connections at all
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    svc = BankSyncService(db, provider)
+    await svc.sync_workspace(ws_id, today=TODAY)
+    await db.refresh(connection)
+    assert connection.status == "error"
+    assert connection.last_error == "ITEM_NOT_FOUND"
+    assert connection.last_synced_at is None
+
+
+async def test_sync_workspace_item_error_status_does_not_advance_last_synced_at(db, initialized_instance):
+    """Finding 1: a LOGIN_ERROR round never raises (data is just stale), so
+    the old code's bare `last_synced_at = now()` after the try block would
+    silently advance it anyway. It must stay pinned at the last genuinely
+    successful (UPDATED) round."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+
+    ok_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, ok_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    await db.refresh(connection)
+    seeded_last_synced_at = connection.last_synced_at
+    assert seeded_last_synced_at is not None
+
+    error_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="LOGIN_ERROR")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, error_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    await db.refresh(connection)
+    assert connection.status == "error"
+    assert connection.last_error == "LOGIN_ERROR"
+    assert connection.last_synced_at == seeded_last_synced_at
+
+
+async def test_sync_workspace_recovery_after_item_error_uses_pre_outage_last_synced_at(db, initialized_instance):
+    """Finding 1, recovery half: once the login is repaired (status back to
+    UPDATED), the overlap window must be computed from the timestamp of the
+    last UPDATED round — not from "now" — so nothing that posted during the
+    outage is skipped."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+
+    ok_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, ok_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    connection.last_synced_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    await db.commit()
+
+    error_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="LOGIN_ERROR")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, error_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+
+    recovery_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, recovery_provider).sync_workspace(ws_id, today=TODAY)
+
+    expected_from = date(2026, 9, 1) - timedelta(days=SYNC_OVERLAP_DAYS)
+    assert recovery_provider.transaction_calls == [("acc-1", expected_from)]
+
+
 # --------------------------------------------------------------------------- #
 # reconcile / unlink / delete_connection / mappings
 # --------------------------------------------------------------------------- #
@@ -676,6 +932,47 @@ async def test_reconcile_posts_exactly_the_gap_then_balance_matches(db, initiali
     assert balance == 500_00
     actions = await _actions(db)
     assert Actions.ACCOUNT_BALANCE_RECONCILED in actions
+
+
+async def test_reconcile_locks_the_account_row(db, engine, initialized_instance):
+    """Finding 3: reconcile()'s balance()-then-write must take
+    `SELECT ... FOR UPDATE` on the Account row — a double-clicked Reconcile,
+    or one racing the daily sync job, must serialize rather than both reading
+    the same stale balance and posting two adjustments."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL", initial_balance_minor=100_00)
+    connection = await _connection(db, ws_id)
+    link = await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1), provider_balance_minor=500_00)
+    svc = BankSyncService(db, FakeBankProvider())
+
+    statements: list[str] = []
+    listener = _capture_sql(engine, statements)
+    try:
+        await svc.reconcile(ws_id, link.id, today=TODAY)
+    finally:
+        sa.event.remove(engine.sync_engine, "before_cursor_execute", listener)
+
+    assert any("FOR UPDATE" in s.upper() and "accounts" in s.lower() for s in statements)
+
+
+async def test_reconcile_twice_in_a_row_posts_only_one_adjustment(db, initialized_instance):
+    """Belt-and-braces alongside the FOR-UPDATE assertion above: even without
+    a real race, calling reconcile() a second time right after the first
+    must see the already-closed gap and post nothing more."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL", initial_balance_minor=100_00)
+    connection = await _connection(db, ws_id)
+    link = await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1), provider_balance_minor=500_00)
+    svc = BankSyncService(db, FakeBankProvider())
+
+    first = await svc.reconcile(ws_id, link.id, today=TODAY)
+    await db.commit()
+    assert first is not None
+    assert first.amount_minor == 400_00
+
+    second = await svc.reconcile(ws_id, link.id, today=TODAY)
+    await db.commit()
+    assert second is None
 
 
 async def test_reconcile_returns_none_when_gap_is_zero(db, initialized_instance):

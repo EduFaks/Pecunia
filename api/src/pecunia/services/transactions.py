@@ -54,6 +54,15 @@ class ManagedByTransferError(Exception):
     refuses to mutate it. The router maps this to 409 MANAGED_BY_TRANSFER."""
 
 
+class ImportedAccountImmutableError(Exception):
+    """Raised when an update attempts to move an imported transaction
+    (external_id set — Track T bank sync) to a different account. Dedupe on
+    re-sync keys off (account_id, external_id); moving the row would make
+    the next sync re-import it under its original account, silently
+    duplicating it. Every other field on an imported transaction stays
+    editable. The router maps this to 409 IMPORTED_ACCOUNT_IMMUTABLE."""
+
+
 class TransactionService:
     """Transaction business logic. Contract: methods flush, never commit —
     the caller (router) owns the transaction boundary (CONVENTIONS §2)."""
@@ -254,6 +263,16 @@ class TransactionService:
         # it here so the paired-leg invariant can't be broken from the tx API.
         if transaction.transfer_id is not None:
             raise ManagedByTransferError()
+        # An imported row's account is immutable (finding 5, hotfix wave): a
+        # client that always resends the transaction's own current
+        # account_id must still succeed, so this only fires on an actual
+        # move to a *different* account.
+        if (
+            transaction.external_id is not None
+            and account_id is not None
+            and account_id != transaction.account_id
+        ):
+            raise ImportedAccountImmutableError()
         # Re-validate the account/currency relationship BEFORE mutating
         # anything (mirrors create's validate-first structure) whenever
         # either side of it could change. Validating first — rather than

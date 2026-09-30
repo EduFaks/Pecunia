@@ -15,6 +15,7 @@ read from the clock here — `last_synced_at`/`provider_balance_as_of` are
 timestamps (like soft-delete), not "business dates", so `datetime.now(UTC)`
 is fine for those."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -43,11 +44,15 @@ from pecunia.services.transactions import (
     TransactionService,
 )
 
+logger = logging.getLogger(__name__)
+
 # A subsequent sync widens its window this many days before the last
 # successful sync, to catch a transaction that posted late (e.g. a pending
 # charge that settled after the previous run already passed its date) —
-# never earlier than the link's own `sync_from` floor, though.
-SYNC_OVERLAP_DAYS = 7
+# never earlier than the link's own `sync_from` floor, though. 30 days
+# (rather than a tighter 7) covers realistic card-posting delays at trivial
+# cost for personal scale — dedupe (external_id) absorbs the wider re-fetch.
+SYNC_OVERLAP_DAYS = 30
 
 
 class ConnectionNotFoundError(Exception):
@@ -252,6 +257,19 @@ class BankSyncService:
 
         # 7. Anchor ONCE, after importing (never before — anchoring first
         # would double-count the transactions about to be imported).
+        # Row-locked: a link_account racing another mutation of this same
+        # account (e.g. a concurrent reconcile()) must not read a
+        # not-yet-committed balance and compute a stale adjustment (finding
+        # 3). `populate_existing` refreshes `account` in place with the
+        # locked, possibly-newer column values.
+        account = (
+            await self.db.execute(
+                scoped_select(Account, workspace_id)
+                .where(Account.id == account.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
         account_svc = AccountService(self.db)
         # AccountService.balance() sums a Postgres numeric (SUM(bigint)) and
         # comes back as Decimal — coerce to a plain int before it touches
@@ -311,6 +329,14 @@ class BankSyncService:
                     .scalars()
                     .all()
                 )
+                # Per-link isolation (finding 7): one link's own import
+                # failure — a provider error scoped to just that account, or
+                # a CurrencyMismatchError from one FX transaction on a card
+                # whose account currency doesn't match — must not abort its
+                # siblings. Unlike the outer except below (a break at the
+                # connection level, before any link here was even attempted),
+                # this is "we got partway through this connection's links".
+                link_errors: list[str] = []
                 for link in links:
                     window_start = link.sync_from
                     if connection.last_synced_at is not None:
@@ -319,26 +345,68 @@ class BankSyncService:
                             connection.last_synced_at.date() - timedelta(days=SYNC_OVERLAP_DAYS),
                         )
                     provider_account = provider_accounts_by_id.get(link.pluggy_account_id)
+                    try:
+                        # Import FIRST, only then adopt the provider's
+                        # reported balance/card fields — writing them before
+                        # a successful import would let a raised _sync_link
+                        # leave a flushed balance on a link whose
+                        # transactions were never actually fetched, opening
+                        # a false divergence that Reconcile "fixes" and the
+                        # next real sync double-counts (finding 2).
+                        link_created, link_skipped = await self._sync_link(
+                            link, from_date=window_start, today=today
+                        )
+                    except (BankProviderError, CurrencyMismatchError) as exc:
+                        link_errors.append(str(exc))
+                        logger.warning(
+                            "Bank sync failed for link %s on connection %s (%s): %s",
+                            link.pluggy_account_id,
+                            connection.pluggy_item_id,
+                            connection.institution_name,
+                            exc,
+                        )
+                        continue
+                    created += link_created
+                    skipped += link_skipped
                     if provider_account is not None:
                         link.provider_balance_minor = provider_account.balance_minor
                         link.provider_balance_as_of = datetime.now(UTC)
                         link.credit_limit_minor = provider_account.credit_limit_minor
                         link.bill_close_date = provider_account.bill_close_date
                         link.bill_due_date = provider_account.bill_due_date
-                    link_created, link_skipped = await self._sync_link(
-                        link, from_date=window_start, today=today
-                    )
-                    created += link_created
-                    skipped += link_skipped
+                errors.extend(link_errors)
 
                 item_status = status_by_item.get(connection.pluggy_item_id)
-                connection.status = (
-                    BankConnectionStatus.OK.value
-                    if item_status == "UPDATED"
-                    else BankConnectionStatus.ERROR.value
-                )
-                connection.last_error = None if item_status == "UPDATED" else item_status
-                connection.last_synced_at = datetime.now(UTC)
+                if link_errors:
+                    # A failed link overrides whatever the item status would
+                    # otherwise have implied — a healthy Pluggy connection
+                    # with one bad link is still a connection this sync
+                    # round did not fully complete.
+                    connection.status = BankConnectionStatus.ERROR.value
+                    connection.last_error = link_errors[0]
+                elif item_status is None:
+                    # The item vanished from the provider's own listing
+                    # entirely (e.g. the user removed it in Pluggy) —
+                    # distinct from any known status string (finding 10).
+                    connection.status = BankConnectionStatus.ERROR.value
+                    connection.last_error = "ITEM_NOT_FOUND"
+                elif item_status in ("UPDATED", "UPDATING"):
+                    # UPDATING is Pluggy still refreshing this item — not an
+                    # error, just not "done" yet (finding 10).
+                    connection.status = BankConnectionStatus.OK.value
+                    connection.last_error = None
+                else:
+                    connection.status = BankConnectionStatus.ERROR.value
+                    connection.last_error = item_status
+                # Only a genuinely fresh (UPDATED) round with every link
+                # clean advances the watermark — an item stuck in
+                # LOGIN_ERROR/UPDATING/vanished never raises here (its data
+                # is just stale or partial), so without this guard the
+                # window would silently slide past an outage and the
+                # eventually-repaired login would never re-fetch what it
+                # missed (finding 1 + finding 7).
+                if item_status == "UPDATED" and not link_errors:
+                    connection.last_synced_at = datetime.now(UTC)
                 await self.db.flush()
                 await event_bus.publish(
                     self.db,
@@ -352,6 +420,12 @@ class BankSyncService:
                 )
             except BankProviderError as exc:
                 errors.append(str(exc))
+                logger.warning(
+                    "Bank sync failed for connection %s (%s): %s",
+                    connection.pluggy_item_id,
+                    connection.institution_name,
+                    exc,
+                )
                 connection.status = BankConnectionStatus.ERROR.value
                 connection.last_error = str(exc)
                 await self.db.flush()
@@ -487,7 +561,21 @@ class BankSyncService:
         link = await get_scoped(self.db, BankAccountLink, link_id, workspace_id)
         if link is None:
             raise LinkNotFoundError()
-        account = await get_scoped(self.db, Account, link.account_id, workspace_id)
+        # Row-locked: a double-clicked Reconcile, or one racing the daily
+        # sync job's own anchor step, must serialize on this Account row
+        # rather than both reading the same pre-adjustment balance and each
+        # posting their own "gap" (finding 3). `populate_existing` ensures we
+        # see the lock-winner's committed values, not a stale snapshot.
+        account = (
+            await self.db.execute(
+                scoped_select(Account, workspace_id)
+                .where(Account.id == link.account_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if account is None:
+            raise LinkNotFoundError()
         account_svc = AccountService(self.db)
         balance = int(await account_svc.balance(account))
         gap = (link.provider_balance_minor or 0) - balance

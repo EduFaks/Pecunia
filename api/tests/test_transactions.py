@@ -1082,4 +1082,124 @@ async def test_duplicate_external_id_same_account_raises_integrity_error(db, ini
             occurred_on=date(2026, 9, 12),
             external_id="dup-ext-1",
         )
+
+
+# --- Finding 5 (hotfix wave): imported transactions can't change account ---
+# Dedupe on re-sync keys off (account_id, external_id). Moving an imported
+# row to a different account would make the next sync re-import it under
+# its original account, silently duplicating it — so account_id must be
+# immutable once external_id is set, while every other field stays editable.
+
+
+async def test_update_imported_transaction_changing_account_id_raises(db, initialized_instance):
+    import pytest
+
+    from pecunia.services.transactions import ImportedAccountImmutableError
+
+    ws_id = initialized_instance["workspace_id"]
+    account_a = await _svc_account(db, ws_id, name="A")
+    account_b = await _svc_account(db, ws_id, name="B")
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=account_a.id,
+        amount_minor=-1000,
+        currency="BRL",
+        description="Synced purchase",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-immutable-1",
+    )
+    await db.commit()
+    with pytest.raises(ImportedAccountImmutableError):
+        await svc.update(tx, account_id=account_b.id)
+    # Untouched: the transaction still points at its original account.
+    assert tx.account_id == account_a.id
+
+
+async def test_update_imported_transaction_other_fields_still_editable(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=account.id,
+        amount_minor=-1000,
+        currency="BRL",
+        description="Synced purchase",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-immutable-2",
+    )
+    await db.commit()
+    updated = await svc.update(tx, description="Renamed", amount_minor=-2000)
+    assert updated.description == "Renamed"
+    assert updated.amount_minor == -2000
+    assert updated.account_id == account.id
+
+
+async def test_update_imported_transaction_same_account_id_is_a_no_op_allowed(db, initialized_instance):
+    """Re-sending the transaction's own current account_id in a PATCH (e.g. a
+    client that always includes the field) must not be treated as a move."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=account.id,
+        amount_minor=-1000,
+        currency="BRL",
+        description="Synced purchase",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-immutable-3",
+    )
+    await db.commit()
+    updated = await svc.update(tx, account_id=account.id, description="Renamed")
+    assert updated.account_id == account.id
+    assert updated.description == "Renamed"
+
+
+async def test_update_imported_transaction_account_id_returns_409(client, initialized_instance, db):
+    h = await _auth(client)
+    account_a = await _account(client, h, name="A")
+    account_b = await _account(client, h, name="B")
+    ws_id = initialized_instance["workspace_id"]
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=uuid.UUID(account_a["id"]),
+        amount_minor=-1000,
+        currency="BRL",
+        description="Synced purchase",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-api-immutable-1",
+    )
+    await db.commit()
+    resp = await client.patch(
+        f"/api/v1/transactions/{tx.id}", json={"account_id": account_b["id"]}, headers=h
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "IMPORTED_ACCOUNT_IMMUTABLE"
+    got = (await client.get(f"/api/v1/transactions/{tx.id}", headers=h)).json()
+    assert got["account_id"] == account_a["id"]
+
+
+async def test_update_imported_transaction_other_fields_editable_via_api(client, initialized_instance, db):
+    h = await _auth(client)
+    account = await _account(client, h)
+    ws_id = initialized_instance["workspace_id"]
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=uuid.UUID(account["id"]),
+        amount_minor=-1000,
+        currency="BRL",
+        description="Synced purchase",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-api-immutable-2",
+    )
+    await db.commit()
+    resp = await client.patch(
+        f"/api/v1/transactions/{tx.id}", json={"description": "Renamed"}, headers=h
+    )
+    assert resp.status_code == 200
+    assert resp.json()["description"] == "Renamed"
     await db.rollback()

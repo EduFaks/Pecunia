@@ -12,6 +12,7 @@ no field on the corresponding Out schema below — pydantic's default
 `extra="ignore"` on construction drops them silently, which is fine, they're
 just not part of this contract."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from typing import Annotated
@@ -38,6 +39,8 @@ from pecunia.services.transactions import (
     CategoryNotFoundError,
     CurrencyMismatchError,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/bank-sync", tags=["bank-sync"], dependencies=[Depends(require_initialized)]
@@ -187,7 +190,8 @@ async def get_discovery(
     svc = BankSyncService(db, provider)
     try:
         result = await svc.discover(wsctx.workspace_id)
-    except BankProviderError:
+    except BankProviderError as exc:
+        logger.warning("Bank provider unavailable: %s", exc)
         raise HTTPException(status_code=503, detail="BANK_PROVIDER_UNAVAILABLE") from None
     return [DiscoveredConnectionOut(**c) for c in result]
 
@@ -247,7 +251,8 @@ async def create_link(
         raise HTTPException(status_code=409, detail="PLUGGY_ACCOUNT_ALREADY_LINKED") from None
     except CurrencyMismatchError:
         raise HTTPException(status_code=422, detail="CURRENCY_MISMATCH") from None
-    except BankProviderError:
+    except BankProviderError as exc:
+        logger.warning("Bank provider unavailable: %s", exc)
         raise HTTPException(status_code=503, detail="BANK_PROVIDER_UNAVAILABLE") from None
     result = await _connection_out(svc, wsctx.workspace_id, link.connection_id)
     await db.commit()
@@ -300,7 +305,8 @@ async def sync_workspace(
     svc = BankSyncService(db, provider)
     try:
         result = await svc.sync_workspace(wsctx.workspace_id, today=datetime.now(UTC).date())
-    except BankProviderError:
+    except BankProviderError as exc:
+        logger.warning("Bank provider unavailable: %s", exc)
         raise HTTPException(status_code=503, detail="BANK_PROVIDER_UNAVAILABLE") from None
     await db.commit()
     return SyncSummaryOut(**result)

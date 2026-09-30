@@ -259,6 +259,37 @@ describe("LinkDialog", () => {
     });
   });
 
+  it("posts the sync_from date the user picked, not just today", async () => {
+    // Finding 13: sync_from was locked to `today` with no date input
+    // rendered — the locked-in decision is that the user picks the start
+    // date at link time (default today).
+    renderDialog();
+
+    const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
+    fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
+
+    const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
+    fireEvent.change(pecuniaSelect, { target: { value: "acct4" } });
+
+    const syncFromInput = await screen.findByLabelText(/sync from|start date/i);
+    fireEvent.change(syncFromInput, { target: { value: "2026-01-15" } });
+
+    const submitButton = await screen.findByRole("button", { name: /link account/i });
+    fireEvent.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        "/bank-sync/links",
+        expect.objectContaining({
+          method: "POST",
+          json: expect.objectContaining({
+            sync_from: "2026-01-15",
+          }),
+        }),
+      );
+    });
+  });
+
   it("posts with new_account (using the discovered account's currency) when creating linked account", async () => {
     renderDialog();
 

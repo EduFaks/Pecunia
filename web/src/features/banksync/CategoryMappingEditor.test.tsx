@@ -96,17 +96,19 @@ describe("CategoryMappingEditor", () => {
     installFakeBackend();
   });
 
-  it("displays existing mappings", async () => {
+  it("displays existing mappings as free-text Pluggy category values", async () => {
     renderEditor();
 
     // Wait for mappings to load - wait for the "Save mappings" button to appear indicating data is loaded
     const saveButton = await screen.findByRole("button", { name: /save mappings/i });
     expect(saveButton).toBeInTheDocument();
 
-    // Check that we have comboboxes for Pluggy categories with values set
-    const pluggyCategorySelects = screen.getAllByRole("combobox", { name: /Pluggy category/i });
-    expect(pluggyCategorySelects.length).toBeGreaterThanOrEqual(1);
-    expect(pluggyCategorySelects[0]).toHaveValue("TRANSFERS");
+    // Pluggy sends free-text category names (e.g. "Food"), not a fixed
+    // vocabulary — the editor must accept whatever string comes back from
+    // the mappings endpoint in a plain text input, not a constrained select.
+    const pluggyCategoryInputs = screen.getAllByRole("textbox", { name: /Pluggy category/i });
+    expect(pluggyCategoryInputs.length).toBeGreaterThanOrEqual(1);
+    expect(pluggyCategoryInputs[0]).toHaveValue("TRANSFERS");
   });
 
   it("adds a new mapping row", async () => {
@@ -115,9 +117,26 @@ describe("CategoryMappingEditor", () => {
     const addButton = await screen.findByRole("button", { name: /add mapping/i });
     fireEvent.click(addButton);
 
-    // New row should appear with empty category selects
+    // New row should appear with an empty free-text Pluggy category input
+    // and an empty Pecunia category select.
+    const pluggyCategoryInputs = await screen.findAllByRole("textbox", { name: /Pluggy category/i });
+    expect(pluggyCategoryInputs.length).toBeGreaterThanOrEqual(3);
+    expect(pluggyCategoryInputs[pluggyCategoryInputs.length - 1]).toHaveValue("");
+
     const categorySelects = await screen.findAllByRole("combobox", { name: /^Category$/i });
     expect(categorySelects.length).toBeGreaterThanOrEqual(2); // At least the empty new row + existing ones
+  });
+
+  it("types a free-text Pluggy category into a mapping row", async () => {
+    renderEditor();
+
+    const addButton = await screen.findByRole("button", { name: /add mapping/i });
+    fireEvent.click(addButton);
+
+    const pluggyCategoryInputs = await screen.findAllByRole("textbox", { name: /Pluggy category/i });
+    const newInput = pluggyCategoryInputs[pluggyCategoryInputs.length - 1];
+    fireEvent.change(newInput, { target: { value: "Food" } });
+    expect(newInput).toHaveValue("Food");
   });
 
   it("removes a mapping row", async () => {
@@ -133,8 +152,8 @@ describe("CategoryMappingEditor", () => {
 
     // After confirmation, mappings should update
     // If TRANSFERS was removed, we should have fewer mappings than before
-    const pluggyCategorySelects = screen.queryAllByRole("combobox", { name: /Pluggy category/i });
-    expect(pluggyCategorySelects.length).toBeLessThanOrEqual(2);
+    const pluggyCategoryInputs = screen.queryAllByRole("textbox", { name: /Pluggy category/i });
+    expect(pluggyCategoryInputs.length).toBeLessThanOrEqual(1);
   });
 
   it("saves mappings via PUT", async () => {
@@ -144,10 +163,12 @@ describe("CategoryMappingEditor", () => {
     const addButton = await screen.findByRole("button", { name: /add mapping/i });
     fireEvent.click(addButton);
 
-    // Select a pluggy category for the new mapping
-    const pluggyCategorySelects = await screen.findAllByRole("combobox", { name: /Pluggy category/i });
-    fireEvent.change(pluggyCategorySelects[pluggyCategorySelects.length - 1], {
-      target: { value: "FOOD_AND_DINING" },
+    // Type a free-text pluggy category for the new mapping — mirrors the
+    // free text Pluggy actually sends (see api/.../bank_sync.py docstring
+    // and test fixtures using "Food").
+    const pluggyCategoryInputs = await screen.findAllByRole("textbox", { name: /Pluggy category/i });
+    fireEvent.change(pluggyCategoryInputs[pluggyCategoryInputs.length - 1], {
+      target: { value: "Food" },
     });
 
     // Select a local category
@@ -174,7 +195,7 @@ describe("CategoryMappingEditor", () => {
                 pluggy_category: "UTILITIES",
               }),
               expect.objectContaining({
-                pluggy_category: "FOOD_AND_DINING",
+                pluggy_category: "Food",
               }),
             ]),
           }),

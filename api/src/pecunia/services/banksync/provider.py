@@ -6,6 +6,7 @@ every other test in the suite uses instead — no real network call ever runs
 in tests.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -16,11 +17,19 @@ import httpx
 
 from pecunia.money import currency_minor_unit_exponent
 
+logger = logging.getLogger(__name__)
+
 PLUGGY_BASE_URL = "https://api.pluggy.ai"
 
 # Pluggy's cursor-paginated endpoints (/v2/items, /v2/transactions) return up
 # to this many rows per page.
 _PAGE_SIZE = 500
+
+# A hard ceiling on pages followed for one _get_paged call — guards against a
+# cursor that keeps legitimately advancing but never actually terminates
+# (finding 9). 200 pages * 500/page is comfortably beyond any personal-scale
+# workspace's item/transaction volume.
+_MAX_PAGES = 200
 
 
 class BankProviderError(Exception):
@@ -150,36 +159,60 @@ class PluggyProvider:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
+            # Log path + exception string only — never headers, params, the
+            # request body, the client secret, or the api key. httpx's
+            # exception string carries method+URL, which is fine.
+            logger.warning("Pluggy request to %s failed: %s", path, exc)
             raise BankProviderError(f"Pluggy request to {path} failed: {exc}") from exc
         except ValueError as exc:
             # response.json() raises a plain ValueError (json.JSONDecodeError)
             # on a body that isn't valid JSON.
+            logger.warning("Pluggy response from %s wasn't valid JSON: %s", path, exc)
             raise BankProviderError(
                 f"Pluggy response from {path} wasn't valid JSON: {exc}"
             ) from exc
         except KeyError as exc:
             # /auth's body didn't carry the expected "apiKey" field.
+            logger.warning("Pluggy auth response missing apiKey (requested %s): %s", path, exc)
             raise BankProviderError(f"Pluggy auth response missing apiKey: {exc}") from exc
 
     async def _get_paged(self, path: str, params: dict[str, object]) -> list[dict]:
         query: dict[str, object] = {**params, "pageSize": _PAGE_SIZE}
         results: list[dict] = []
-        while True:
+        previous_after: str | None = None
+        for _ in range(_MAX_PAGES):
             page = await self._get(path, query)
             if not isinstance(page, dict):
+                logger.warning("Pluggy paged response from %s wasn't a JSON object", path)
                 raise BankProviderError(f"Pluggy paged response from {path} wasn't a JSON object")
             results.extend(page.get("results") or [])
             next_value = page.get("next")
             if not next_value:
-                break
+                return results
             try:
                 after_token = _extract_after(next_value)
             except (KeyError, ValueError, TypeError) as exc:
+                logger.warning("Pluggy pagination cursor parsing failed for %s: %s", path, exc)
                 raise BankProviderError(
                     f"Pluggy pagination cursor parsing failed for {path}: {exc}"
                 ) from exc
-            query = {**params, "after": after_token}
-        return results
+            # A cursor that doesn't advance would otherwise spin forever —
+            # guard against a misbehaving/looping feed (finding 9).
+            if after_token == previous_after:
+                logger.warning(
+                    "Pluggy pagination for %s returned a repeated cursor %r", path, after_token
+                )
+                raise BankProviderError(
+                    f"Pluggy pagination for {path} returned a repeated cursor {after_token!r}"
+                )
+            previous_after = after_token
+            # `pageSize` must be re-sent on every page, not just the first —
+            # dropping it lets Pluggy fall back to its own (much smaller)
+            # default page size, ballooning the number of requests
+            # (finding 9).
+            query = {**params, "after": after_token, "pageSize": _PAGE_SIZE}
+        logger.warning("Pluggy pagination for %s exceeded %s pages", path, _MAX_PAGES)
+        raise BankProviderError(f"Pluggy pagination for {path} exceeded {_MAX_PAGES} pages")
 
     async def fetch_connections(self) -> list[ProviderConnection]:
         rows = await self._get_paged("/v2/items", {})
@@ -206,15 +239,17 @@ class PluggyProvider:
             # Pluggy's card `balance` is the amount OWED; Pecunia stores a
             # credit-card balance as a negative figure.
             balance_minor = -balance_minor
-        credit_data = row.get("creditData")
-        if credit_data:
-            credit_limit_minor = _to_minor(credit_data["creditLimit"], currency)
-            bill_close_date = date.fromisoformat(credit_data["balanceCloseDate"][:10])
-            bill_due_date = date.fromisoformat(credit_data["balanceDueDate"][:10])
-        else:
-            credit_limit_minor = None
-            bill_close_date = None
-            bill_due_date = None
+        # Each creditData member is independently optional — Pluggy may not
+        # yet have a limit, or a billing-cycle date, even while the object
+        # itself is present (finding 8: don't assume "creditData present"
+        # means "every field in it is present").
+        credit_data = row.get("creditData") or {}
+        credit_limit = credit_data.get("creditLimit")
+        credit_limit_minor = _to_minor(credit_limit, currency) if credit_limit is not None else None
+        close_date = credit_data.get("balanceCloseDate")
+        bill_close_date = date.fromisoformat(close_date[:10]) if close_date else None
+        due_date = credit_data.get("balanceDueDate")
+        bill_due_date = date.fromisoformat(due_date[:10]) if due_date else None
         return ProviderAccount(
             pluggy_account_id=row["id"],
             item_id=item_id,
@@ -261,7 +296,10 @@ class FakeBankProvider:
     sync-service test can assert "one call per linked account, from the
     right date" without a mocking framework. `raise_all=True` makes every
     method raise `BankProviderError`; `raise_for_items` does the same for
-    `fetch_accounts` calls naming one of those item ids specifically."""
+    `fetch_accounts` calls naming one of those item ids specifically;
+    `raise_for_accounts` does the same for `fetch_transactions` calls naming
+    one of those pluggy_account_ids specifically (simulates one link's
+    import failing without touching its siblings)."""
 
     def __init__(
         self,
@@ -271,12 +309,14 @@ class FakeBankProvider:
         transactions_by_account: dict[str, list[ProviderTransaction]] | None = None,
         raise_all: bool = False,
         raise_for_items: set[str] | None = None,
+        raise_for_accounts: set[str] | None = None,
     ):
         self._connections = connections or []
         self._accounts_by_item = accounts_by_item or {}
         self._transactions_by_account = transactions_by_account or {}
         self._raise_all = raise_all
         self._raise_for_items = raise_for_items or set()
+        self._raise_for_accounts = raise_for_accounts or set()
         self.transaction_calls: list[tuple[str, date]] = []
 
     async def fetch_connections(self) -> list[ProviderConnection]:
@@ -293,7 +333,7 @@ class FakeBankProvider:
         self, pluggy_account_id: str, *, from_date: date
     ) -> list[ProviderTransaction]:
         self.transaction_calls.append((pluggy_account_id, from_date))
-        if self._raise_all:
+        if self._raise_all or pluggy_account_id in self._raise_for_accounts:
             raise BankProviderError(f"fake provider failure for account {pluggy_account_id}")
         rows = self._transactions_by_account.get(pluggy_account_id, [])
         return [row for row in rows if row.date >= from_date]
