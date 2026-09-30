@@ -21,7 +21,7 @@ const SECTIONS: SectionDef[] = [
   { id: "audit-log", label: "Audit Log", group: "Security" },
   { id: "preferences", label: "Preferences", group: "General" },
   { id: "categories", label: "Categories", group: "General" },
-  { id: "connections", label: "Bank Connections", group: "General" },
+  { id: "connections", label: "Connections", group: "General" },
 ];
 
 const PANELS: Record<SettingsSection, ComponentType> = {
@@ -36,8 +36,8 @@ const PANELS: Record<SettingsSection, ComponentType> = {
  * `/settings` — in-page subnav (no nested routes: every section reads the
  * same signed-in workspace's data, and none needs to be independently
  * deep-linkable in V1) over five sections: Security → Sessions, Security →
- * Audit Log, General → Preferences, General → Categories, and General → Bank
- * Connections (Track T). Each section is its own component so its
+ * Audit Log, General → Preferences, General → Categories, and General →
+ * Connections (bank sync, Track T). Each section is its own component so its
  * data-fetching only kicks in once selected. (Contacts, formerly a section
  * here, is now its own top-level `/contacts` screen.)
  */

@@ -7,21 +7,26 @@ import Pill from "../../components/ui/Pill";
 import Spinner from "../../components/ui/Spinner";
 import { useToast } from "../../components/ui/Toast";
 import { formatMoney } from "../../lib/money";
+import CategoryMappingEditor from "./CategoryMappingEditor";
+import LinkDialog from "./LinkDialog";
 import { useBankConnections, useDeleteConnection, useReconcile, useSyncNow, useUnlinkAccount } from "./useBankSync";
 import type { BankLinkOut } from "./useBankSync";
 
 type ConfirmTarget = { type: "unlink"; linkId: string } | { type: "reconcile"; linkId: string } | { type: "delete"; connectionId: string } | null;
 
 /**
- * Settings → Bank Connections (Track T). Lists active connections from
- * Pluggy, each showing its linked accounts. Per-link actions: reconcile
- * (confirm and post balancing txn), unlink (sever the Pluggy→Pecunia link).
- * Per-connection action: delete (remove all links and the connection).
- * Global action: Sync Now (fetch transactions for all connections).
+ * Settings → Connections (Track T). Lists active connections from Pluggy,
+ * each showing its linked accounts. Per-link actions: reconcile (confirm and
+ * post balancing txn), unlink (sever the Pluggy→Pecunia link). Per-connection
+ * action: delete (remove all links and the connection). Global actions:
+ * "Link an account" (opens `LinkDialog`) and "Sync now" (fetch transactions
+ * for all connections). `CategoryMappingEditor` renders beneath the
+ * connections list per the Task 7 brief.
  */
 function ConnectionsPanel() {
   const { showToast } = useToast();
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
 
   const connectionsQuery = useBankConnections();
   const syncNow = useSyncNow();
@@ -142,107 +147,127 @@ function ConnectionsPanel() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="font-display text-lg text-ink">Bank Connections</h2>
-        <Button
-          variant="primary"
-          size="sm"
-          loading={syncNow.isPending}
-          onClick={() => void handleSyncNow()}
-        >
-          Sync now
-        </Button>
+    <div className="flex flex-col gap-10">
+      <div className="flex flex-col gap-6">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="font-display text-lg text-ink">Bank Connections</h2>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLinkDialogOpen(true)}
+            >
+              Link an account
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={syncNow.isPending}
+              onClick={() => void handleSyncNow()}
+            >
+              Sync now
+            </Button>
+          </div>
+        </div>
+
+        {connections.length === 0 ? (
+          <EmptyState
+            title="No bank connections"
+            body="Link a bank account to start syncing transactions."
+            action={
+              <Button variant="primary" size="sm" onClick={() => setLinkDialogOpen(true)}>
+                Link an account
+              </Button>
+            }
+          />
+        ) : (
+          <div className="flex flex-col gap-6">
+            {connections.map((connection) => (
+              <div
+                key={connection.id}
+                className="flex flex-col gap-3 rounded-pc-lg border border-hairline bg-surface-1 p-4"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-ink-faint">
+                      Status: <span className={connection.status === "ok" ? "text-emerald-12" : "text-coral-12"}>
+                        {connection.status === "ok" ? "Connected" : "Error"}
+                      </span>
+                    </p>
+                    {connection.last_synced_at ? (
+                      <p className="mt-1 font-mono text-xs text-ink-faint">
+                        Last synced: {new Date(connection.last_synced_at).toLocaleString()}
+                      </p>
+                    ) : null}
+                    {connection.last_error ? (
+                      <p className="mt-1 font-mono text-xs text-coral-12">
+                        Error: {connection.last_error}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    loading={deleteConnectionMutation.isPending && confirmTarget?.type === "delete" && confirmTarget?.connectionId === connection.id}
+                    onClick={() => setConfirmTarget({ type: "delete", connectionId: connection.id })}
+                  >
+                    Delete connection
+                  </Button>
+                </div>
+
+                {connection.links.length === 0 ? (
+                  <p className="text-sm text-ink-faint">No linked accounts.</p>
+                ) : (
+                  <ul className="flex flex-col gap-3">
+                    {connection.links.map((link) => (
+                      <li key={link.id}>
+                        {renderLink(link)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {confirmTarget?.type === "reconcile" ? (
+          <ConfirmDialog
+            title="Reconcile account?"
+            description="This will post a balancing transaction to match the bank's balance."
+            confirmLabel="Reconcile"
+            onConfirm={() => void handleReconcile(confirmTarget.linkId)}
+            onCancel={() => setConfirmTarget(null)}
+            isConfirming={reconcileMutation.isPending}
+          />
+        ) : null}
+
+        {confirmTarget?.type === "unlink" ? (
+          <ConfirmDialog
+            title="Unlink account?"
+            description="This severs the link between this Pecunia account and the bank. No data is deleted."
+            confirmLabel="Unlink"
+            onConfirm={() => void handleUnlink(confirmTarget.linkId)}
+            onCancel={() => setConfirmTarget(null)}
+            isConfirming={unlinkMutation.isPending}
+          />
+        ) : null}
+
+        {confirmTarget?.type === "delete" ? (
+          <ConfirmDialog
+            title="Delete connection?"
+            description="This removes all linked accounts and the connection. No Pecunia accounts are deleted."
+            confirmLabel="Delete connection"
+            onConfirm={() => void handleDeleteConnection(confirmTarget.connectionId)}
+            onCancel={() => setConfirmTarget(null)}
+            isConfirming={deleteConnectionMutation.isPending}
+          />
+        ) : null}
       </div>
 
-      {connections.length === 0 ? (
-        <EmptyState
-          title="No bank connections"
-          body="Link a bank account to start syncing transactions."
-        />
-      ) : (
-        <div className="flex flex-col gap-6">
-          {connections.map((connection) => (
-            <div
-              key={connection.id}
-              className="flex flex-col gap-3 rounded-pc-lg border border-hairline bg-surface-1 p-4"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm text-ink-faint">
-                    Status: <span className={connection.status === "ok" ? "text-emerald-12" : "text-coral-12"}>
-                      {connection.status === "ok" ? "Connected" : "Error"}
-                    </span>
-                  </p>
-                  {connection.last_synced_at ? (
-                    <p className="mt-1 font-mono text-xs text-ink-faint">
-                      Last synced: {new Date(connection.last_synced_at).toLocaleString()}
-                    </p>
-                  ) : null}
-                  {connection.last_error ? (
-                    <p className="mt-1 font-mono text-xs text-coral-12">
-                      Error: {connection.last_error}
-                    </p>
-                  ) : null}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={deleteConnectionMutation.isPending && confirmTarget?.type === "delete" && confirmTarget?.connectionId === connection.id}
-                  onClick={() => setConfirmTarget({ type: "delete", connectionId: connection.id })}
-                >
-                  Delete connection
-                </Button>
-              </div>
+      <CategoryMappingEditor />
 
-              {connection.links.length === 0 ? (
-                <p className="text-sm text-ink-faint">No linked accounts.</p>
-              ) : (
-                <ul className="flex flex-col gap-3">
-                  {connection.links.map((link) => (
-                    <li key={link.id}>
-                      {renderLink(link)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {confirmTarget?.type === "reconcile" ? (
-        <ConfirmDialog
-          title="Reconcile account?"
-          description="This will post a balancing transaction to match the bank's balance."
-          confirmLabel="Reconcile"
-          onConfirm={() => void handleReconcile(confirmTarget.linkId)}
-          onCancel={() => setConfirmTarget(null)}
-          isConfirming={reconcileMutation.isPending}
-        />
-      ) : null}
-
-      {confirmTarget?.type === "unlink" ? (
-        <ConfirmDialog
-          title="Unlink account?"
-          description="This severs the link between this Pecunia account and the bank. No data is deleted."
-          confirmLabel="Unlink"
-          onConfirm={() => void handleUnlink(confirmTarget.linkId)}
-          onCancel={() => setConfirmTarget(null)}
-          isConfirming={unlinkMutation.isPending}
-        />
-      ) : null}
-
-      {confirmTarget?.type === "delete" ? (
-        <ConfirmDialog
-          title="Delete connection?"
-          description="This removes all linked accounts and the connection. No Pecunia accounts are deleted."
-          confirmLabel="Delete connection"
-          onConfirm={() => void handleDeleteConnection(confirmTarget.connectionId)}
-          onCancel={() => setConfirmTarget(null)}
-          isConfirming={deleteConnectionMutation.isPending}
-        />
-      ) : null}
+      <LinkDialog open={linkDialogOpen} onClose={() => setLinkDialogOpen(false)} />
     </div>
   );
 }

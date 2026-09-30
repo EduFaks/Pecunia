@@ -20,15 +20,29 @@ interface LinkDialogProps {
   onClose: () => void;
 }
 
+/** A discovered account flattened out of its parent `DiscoveredConnectionOut`
+ * — the wizard picks one account at a time, so it needs the account plus
+ * the item/institution identifiers from its connection alongside it. */
+interface FlatDiscoveredAccount {
+  itemId: string;
+  institutionName: string;
+  account: DiscoveredAccountOut;
+}
+
+function discoveredKey(flat: FlatDiscoveredAccount): string {
+  return `${flat.itemId}:${flat.account.pluggy_account_id}`;
+}
+
 /**
  * Link wizard dialog (Track T). Step 1: select a discovered Pluggy account
- * (filtered to unlinked). Step 2: link to existing Pecunia account (filtered
- * by matching currency) or create new. Handles 503 discovery gracefully.
+ * (filtered to unlinked, across all discovered connections). Step 2: link to
+ * an existing Pecunia account (filtered to the same currency as the
+ * discovered account) or create new. Handles 503 discovery gracefully.
  */
 function LinkDialog({ open, onClose }: LinkDialogProps) {
   const { showToast } = useToast();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [selectedDiscovered, setSelectedDiscovered] = useState<DiscoveredAccountOut | null>(null);
+  const [selectedDiscovered, setSelectedDiscovered] = useState<FlatDiscoveredAccount | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [createMode, setCreateMode] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
@@ -40,7 +54,8 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
     enabled: open,
   });
 
-  const discoveryQuery = useBankDiscovery(() => setDiscoveryUnavailable(true));
+  // Discovery must not fetch while the dialog is closed — `open` gates it.
+  const discoveryQuery = useBankDiscovery(open, () => setDiscoveryUnavailable(true));
   const linkAccount = useLinkAccount();
 
   const handleClose = useCallback(() => {
@@ -71,17 +86,28 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, handleClose]);
 
-  // Filter discovered to unlinked only
-  const unlinkedDiscovered = useMemo(() => {
-    return (discoveryQuery.data ?? []).filter((acc) => acc.linked_account_id === null);
+  // Flatten discovered connections' accounts (each tagged with its parent
+  // item/institution), filtered to those not yet linked to a Pecunia account.
+  const unlinkedDiscovered = useMemo<FlatDiscoveredAccount[]>(() => {
+    return (discoveryQuery.data ?? []).flatMap((connection) =>
+      connection.accounts
+        .filter((account) => account.linked_account_id === null)
+        .map((account) => ({
+          itemId: connection.item_id,
+          institutionName: connection.institution_name,
+          account,
+        })),
+    );
   }, [discoveryQuery.data]);
 
-  // Filter accounts by currency if a discovered account is selected
+  // Existing Pecunia accounts offered as a link target are limited to the
+  // same currency as the selected discovered account — linking across
+  // currencies isn't representable (mirrors the backend's CURRENCY_MISMATCH).
   const filteredAccounts = useMemo(() => {
-    if (!selectedDiscovered || selectedDiscovered.type !== "BANK") return accountsQuery.data?.items ?? [];
-    // Assume discovered.balance gives us a hint about the currency
-    // For now, filter by exact currency match
-    return (accountsQuery.data?.items ?? []).filter((acc) => acc.currency === "USD");
+    if (!selectedDiscovered) return [];
+    return (accountsQuery.data?.items ?? []).filter(
+      (acc) => acc.currency === selectedDiscovered.account.currency,
+    );
   }, [selectedDiscovered, accountsQuery.data]);
 
   async function handleLink() {
@@ -89,14 +115,14 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
 
     try {
       const payload = {
-        pluggy_item_id: selectedDiscovered.pluggy_item_id,
-        pluggy_account_id: selectedDiscovered.pluggy_account_id,
+        pluggy_item_id: selectedDiscovered.itemId,
+        pluggy_account_id: selectedDiscovered.account.pluggy_account_id,
         sync_from: new Date().toISOString().split("T")[0],
         ...(createMode
           ? {
               new_account: {
                 name: newAccountName,
-                currency: "USD",
+                currency: selectedDiscovered.account.currency,
               },
             }
           : selectedAccountId
@@ -164,15 +190,15 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
                 className="rounded-pc border border-hairline bg-surface-0 px-3 py-2 text-sm text-ink"
                 onChange={(e) => {
                   const discovered = unlinkedDiscovered.find(
-                    (d) => `${d.pluggy_item_id}:${d.pluggy_account_id}` === e.target.value,
+                    (d) => discoveredKey(d) === e.target.value,
                   );
                   setSelectedDiscovered(discovered || null);
                 }}
               >
                 <option value="">Select an account...</option>
-                {unlinkedDiscovered.map((account) => (
-                  <option key={`${account.pluggy_item_id}:${account.pluggy_account_id}`} value={`${account.pluggy_item_id}:${account.pluggy_account_id}`}>
-                    {account.pluggy_account_id} ({account.type})
+                {unlinkedDiscovered.map((flat) => (
+                  <option key={discoveredKey(flat)} value={discoveredKey(flat)}>
+                    {flat.account.name} — {flat.institutionName} ({flat.account.pluggy_account_id})
                   </option>
                 ))}
               </select>

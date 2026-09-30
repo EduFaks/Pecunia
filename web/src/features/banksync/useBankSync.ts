@@ -44,14 +44,28 @@ export interface BankConnectionOut {
   links: BankLinkOut[];
 }
 
-/** Mirrors `DiscoveredAccountOut`. Represents a Pluggy account discovered
- * during the link wizard, potentially already linked to a Pecunia account. */
+/** Mirrors `DiscoveredAccountOut` (`api/src/pecunia/api/banksync.py`). One
+ * Pluggy account discovered during the link wizard, nested under its
+ * connection in `DiscoveredConnectionOut.accounts` — potentially already
+ * linked to a Pecunia account (`linked_account_id`). */
 export interface DiscoveredAccountOut {
-  pluggy_item_id: string;
   pluggy_account_id: string;
-  type: "BANK" | "CREDIT";
-  balance: number;
+  type: string;
+  subtype: string;
+  name: string;
+  number: string | null;
+  balance_minor: number;
+  currency: string;
   linked_account_id: string | null;
+}
+
+/** Mirrors `DiscoveredConnectionOut`. A single Pluggy item (bank
+ * connection) surfaced by discovery, with its accounts nested inside. */
+export interface DiscoveredConnectionOut {
+  item_id: string;
+  institution_name: string;
+  status: string;
+  accounts: DiscoveredAccountOut[];
 }
 
 /** Mirrors `CategoryMappingOut`. A mapping from a Pluggy transaction
@@ -119,16 +133,19 @@ export function useBankConnections() {
   });
 }
 
-/** Discovered accounts from Pluggy, filtered to those not yet linked. Takes
- * optional callback to dismiss the query gracefully when discovery is
- * unavailable (503). Returns empty array on error unless a callback catches
- * it. */
-export function useBankDiscovery(onUnavailable?: () => void) {
+/** Discovered Pluggy connections (each with its nested accounts, some
+ * already linked). `enabled` gates the fetch — the link wizard is the only
+ * consumer, so discovery must not fire while its dialog is closed; pass its
+ * `open` prop straight through. Takes an optional callback to dismiss the
+ * query gracefully when discovery is unavailable (503). Returns an empty
+ * array on that error unless a callback catches it. */
+export function useBankDiscovery(enabled: boolean, onUnavailable?: () => void) {
   return useQuery({
     queryKey: [...qk.bankSync, "discovery"],
+    enabled,
     queryFn: async () => {
       try {
-        return await apiFetch<DiscoveredAccountOut[]>("/bank-sync/discovery");
+        return await apiFetch<DiscoveredConnectionOut[]>("/bank-sync/discovery");
       } catch (err) {
         const error = err as { status?: number };
         if (error.status === 503) {

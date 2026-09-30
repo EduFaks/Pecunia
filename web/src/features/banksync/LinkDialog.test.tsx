@@ -22,27 +22,52 @@ function installFakeBackend() {
         return Promise.resolve({ user: null, preferences: null });
       }
       if (path.startsWith("/bank-sync/discovery") && method === "GET") {
+        // Shape mirrors DiscoveredConnectionOut (api/src/pecunia/api/banksync.py):
+        // connections nest their discovered accounts, each carrying its own currency.
         return Promise.resolve([
           {
-            pluggy_item_id: "item1",
-            pluggy_account_id: "acct-bank-1",
-            type: "BANK",
-            balance: 5000_00,
-            linked_account_id: null,
+            item_id: "item1",
+            institution_name: "Banco do Brasil",
+            status: "UPDATED",
+            accounts: [
+              {
+                pluggy_account_id: "acct-bank-1",
+                type: "BANK",
+                subtype: "checking_account",
+                name: "Conta Corrente",
+                number: "1234",
+                balance_minor: 500_000,
+                currency: "BRL",
+                linked_account_id: null,
+              },
+              {
+                pluggy_account_id: "acct-cc-1",
+                type: "CREDIT",
+                subtype: "credit_card",
+                name: "Cartao",
+                number: "5678",
+                balance_minor: 200_000,
+                currency: "BRL",
+                linked_account_id: "acct2", // already linked
+              },
+            ],
           },
           {
-            pluggy_item_id: "item1",
-            pluggy_account_id: "acct-cc-1",
-            type: "CREDIT",
-            balance: 2000_00,
-            linked_account_id: "acct2", // already linked
-          },
-          {
-            pluggy_item_id: "item2",
-            pluggy_account_id: "acct-bank-2",
-            type: "BANK",
-            balance: 10000_00,
-            linked_account_id: null,
+            item_id: "item2",
+            institution_name: "Chase",
+            status: "UPDATED",
+            accounts: [
+              {
+                pluggy_account_id: "acct-bank-2",
+                type: "BANK",
+                subtype: "checking_account",
+                name: "Checking",
+                number: "9999",
+                balance_minor: 1_000_000,
+                currency: "USD",
+                linked_account_id: null,
+              },
+            ],
           },
         ]);
       }
@@ -67,6 +92,12 @@ function installFakeBackend() {
               currency: "EUR",
               subtype: "savings",
             },
+            {
+              id: "acct4",
+              name: "Conta BRL",
+              currency: "BRL",
+              subtype: "checking",
+            },
           ],
           next_cursor: null,
         });
@@ -84,7 +115,7 @@ function installFakeBackend() {
                 id: "link-new",
                 account_id: body.account_id,
                 account_name: "New Link",
-                account_currency: "USD",
+                account_currency: "BRL",
                 pluggy_account_id: body.pluggy_account_id,
                 sync_from: body.sync_from,
                 provider_balance_minor: 0,
@@ -154,6 +185,13 @@ describe("LinkDialog", () => {
     installFakeBackend();
   });
 
+  it("does not fetch discovery while closed, and fetches once opened", async () => {
+    renderDialog({ open: false, onClose: vi.fn() });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockApiFetch.mock.calls.some(([path]) => path === "/bank-sync/discovery")).toBe(false);
+  });
+
   it("filters out already-linked discovered accounts", async () => {
     renderDialog();
 
@@ -167,39 +205,40 @@ describe("LinkDialog", () => {
     const unlinkedOptions = Array.from(options).filter((opt) =>
       ["acct-bank-1", "acct-bank-2"].some((id) => opt.textContent?.includes(id)),
     );
-    expect(unlinkedOptions.length).toBeGreaterThan(0);
+    expect(unlinkedOptions.length).toBe(2);
   });
 
-  it("filters existing account options by currency matching discovered account", async () => {
+  it("filters existing account options to the same currency as the discovered account", async () => {
     renderDialog();
 
-    // Select a discovered account
+    // Select the BRL discovered account (Banco do Brasil / Conta Corrente)
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
     fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
 
-    // Should show only USD accounts (Checking, Credit Card) in the Pecunia Account select
-    // Should NOT show EUR account (Savings EUR)
+    // Should show only the BRL Pecunia account (Conta BRL)
+    // Should NOT show the USD accounts (Checking, Credit Card) or the EUR one (Savings EUR)
     const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
     const accountOptions = pecuniaSelect.querySelectorAll("option");
-    const eurOption = Array.from(accountOptions).find((opt) => opt.textContent?.includes("Savings EUR"));
-    expect(eurOption).toBeUndefined();
 
-    const usdOptions = Array.from(accountOptions).filter((opt) =>
-      ["Checking", "Credit Card"].some((name) => opt.textContent?.includes(name)),
+    const brlOption = Array.from(accountOptions).find((opt) => opt.textContent?.includes("Conta BRL"));
+    expect(brlOption).toBeInTheDocument();
+
+    const nonBrlOption = Array.from(accountOptions).find((opt) =>
+      ["Checking", "Credit Card", "Savings EUR"].some((name) => opt.textContent?.includes(name)),
     );
-    expect(usdOptions.length).toBeGreaterThan(0);
+    expect(nonBrlOption).toBeUndefined();
   });
 
   it("posts with account_id when linking to existing account", async () => {
     renderDialog();
 
-    // Select discovered account
+    // Select the BRL discovered account
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
     fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
 
-    // Select existing account - this appears after selecting discovered account
+    // Select the matching-currency existing account
     const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
-    fireEvent.change(pecuniaSelect, { target: { value: "acct1" } });
+    fireEvent.change(pecuniaSelect, { target: { value: "acct4" } });
 
     // Submit - now the button should be enabled
     const submitButton = await screen.findByRole("button", { name: /link account/i });
@@ -211,20 +250,21 @@ describe("LinkDialog", () => {
         expect.objectContaining({
           method: "POST",
           json: expect.objectContaining({
+            pluggy_item_id: "item1",
             pluggy_account_id: "acct-bank-1",
-            account_id: "acct1",
+            account_id: "acct4",
           }),
         }),
       );
     });
   });
 
-  it("posts with new_account when creating linked account", async () => {
+  it("posts with new_account (using the discovered account's currency) when creating linked account", async () => {
     renderDialog();
 
-    // Select discovered account
+    // Select the USD discovered account (Chase / Checking)
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
-    fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
+    fireEvent.change(discoverSelect, { target: { value: "item2:acct-bank-2" } });
 
     // Choose "Create new account"
     const createButton = await screen.findByRole("button", { name: /create new account/i });
@@ -244,7 +284,8 @@ describe("LinkDialog", () => {
         expect.objectContaining({
           method: "POST",
           json: expect.objectContaining({
-            pluggy_account_id: "acct-bank-1",
+            pluggy_item_id: "item2",
+            pluggy_account_id: "acct-bank-2",
             new_account: expect.objectContaining({
               name: "New Checking",
               currency: "USD",

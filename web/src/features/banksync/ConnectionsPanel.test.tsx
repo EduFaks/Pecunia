@@ -92,6 +92,23 @@ function installFakeBackend() {
       if (path.startsWith("/bank-sync/connections/conn1") && method === "DELETE") {
         return Promise.resolve(undefined);
       }
+      // CategoryMappingEditor now renders unconditionally beneath the
+      // connections list, so every render needs these two endpoints too.
+      if (path.startsWith("/bank-sync/category-mappings") && method === "GET") {
+        return Promise.resolve([]);
+      }
+      if (path.startsWith("/categories") && method === "GET") {
+        return Promise.resolve({ items: [], next_cursor: null });
+      }
+      // LinkDialog is always mounted (controlled by its `open` prop), so its
+      // queries need a backend too — gated by `enabled: open`, they must not
+      // actually fire until the dialog is opened (see the dedicated test below).
+      if (path.startsWith("/bank-sync/discovery") && method === "GET") {
+        return Promise.resolve([]);
+      }
+      if (path.startsWith("/accounts") && method === "GET") {
+        return Promise.resolve({ items: [], next_cursor: null });
+      }
       return Promise.reject(new Error(`unexpected call: ${method} ${path}`));
     });
 }
@@ -209,5 +226,27 @@ describe("ConnectionsPanel", () => {
     await waitFor(() => {
       expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/connections/conn1", { method: "DELETE" });
     });
+  });
+
+  it("does not fetch discovery until 'Link an account' opens the dialog", async () => {
+    renderPanel();
+
+    await screen.findByText("Checking");
+    expect(mockApiFetch.mock.calls.some(([path]) => path === "/bank-sync/discovery")).toBe(false);
+
+    const linkButtons = await screen.findAllByRole("button", { name: /link an account/i });
+    fireEvent.click(linkButtons[0]);
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockApiFetch.mock.calls.some(([path]) => path === "/bank-sync/discovery")).toBe(true);
+    });
+  });
+
+  it("renders the category mapping editor beneath the connections list", async () => {
+    renderPanel();
+
+    expect(await screen.findByText("Checking")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /category mappings/i })).toBeInTheDocument();
   });
 });
