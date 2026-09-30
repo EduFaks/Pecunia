@@ -6,6 +6,7 @@ every other test in the suite uses instead — no real network call ever runs
 in tests.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -15,6 +16,8 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from pecunia.money import currency_minor_unit_exponent
+
+logger = logging.getLogger(__name__)
 
 PLUGGY_BASE_URL = "https://api.pluggy.ai"
 
@@ -156,15 +159,21 @@ class PluggyProvider:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
+            # Log path + exception string only — never headers, params, the
+            # request body, the client secret, or the api key. httpx's
+            # exception string carries method+URL, which is fine.
+            logger.warning("Pluggy request to %s failed: %s", path, exc)
             raise BankProviderError(f"Pluggy request to {path} failed: {exc}") from exc
         except ValueError as exc:
             # response.json() raises a plain ValueError (json.JSONDecodeError)
             # on a body that isn't valid JSON.
+            logger.warning("Pluggy response from %s wasn't valid JSON: %s", path, exc)
             raise BankProviderError(
                 f"Pluggy response from {path} wasn't valid JSON: {exc}"
             ) from exc
         except KeyError as exc:
             # /auth's body didn't carry the expected "apiKey" field.
+            logger.warning("Pluggy auth response missing apiKey (requested %s): %s", path, exc)
             raise BankProviderError(f"Pluggy auth response missing apiKey: {exc}") from exc
 
     async def _get_paged(self, path: str, params: dict[str, object]) -> list[dict]:
@@ -174,6 +183,7 @@ class PluggyProvider:
         for _ in range(_MAX_PAGES):
             page = await self._get(path, query)
             if not isinstance(page, dict):
+                logger.warning("Pluggy paged response from %s wasn't a JSON object", path)
                 raise BankProviderError(f"Pluggy paged response from {path} wasn't a JSON object")
             results.extend(page.get("results") or [])
             next_value = page.get("next")
@@ -182,12 +192,16 @@ class PluggyProvider:
             try:
                 after_token = _extract_after(next_value)
             except (KeyError, ValueError, TypeError) as exc:
+                logger.warning("Pluggy pagination cursor parsing failed for %s: %s", path, exc)
                 raise BankProviderError(
                     f"Pluggy pagination cursor parsing failed for {path}: {exc}"
                 ) from exc
             # A cursor that doesn't advance would otherwise spin forever —
             # guard against a misbehaving/looping feed (finding 9).
             if after_token == previous_after:
+                logger.warning(
+                    "Pluggy pagination for %s returned a repeated cursor %r", path, after_token
+                )
                 raise BankProviderError(
                     f"Pluggy pagination for {path} returned a repeated cursor {after_token!r}"
                 )
@@ -197,6 +211,7 @@ class PluggyProvider:
             # default page size, ballooning the number of requests
             # (finding 9).
             query = {**params, "after": after_token, "pageSize": _PAGE_SIZE}
+        logger.warning("Pluggy pagination for %s exceeded %s pages", path, _MAX_PAGES)
         raise BankProviderError(f"Pluggy pagination for {path} exceeded {_MAX_PAGES} pages")
 
     async def fetch_connections(self) -> list[ProviderConnection]:

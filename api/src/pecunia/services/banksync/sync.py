@@ -15,6 +15,7 @@ read from the clock here — `last_synced_at`/`provider_balance_as_of` are
 timestamps (like soft-delete), not "business dates", so `datetime.now(UTC)`
 is fine for those."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -42,6 +43,8 @@ from pecunia.services.transactions import (
     CurrencyMismatchError,
     TransactionService,
 )
+
+logger = logging.getLogger(__name__)
 
 # A subsequent sync widens its window this many days before the last
 # successful sync, to catch a transaction that posted late (e.g. a pending
@@ -355,6 +358,13 @@ class BankSyncService:
                         )
                     except (BankProviderError, CurrencyMismatchError) as exc:
                         link_errors.append(str(exc))
+                        logger.warning(
+                            "Bank sync failed for link %s on connection %s (%s): %s",
+                            link.pluggy_account_id,
+                            connection.pluggy_item_id,
+                            connection.institution_name,
+                            exc,
+                        )
                         continue
                     created += link_created
                     skipped += link_skipped
@@ -410,6 +420,12 @@ class BankSyncService:
                 )
             except BankProviderError as exc:
                 errors.append(str(exc))
+                logger.warning(
+                    "Bank sync failed for connection %s (%s): %s",
+                    connection.pluggy_item_id,
+                    connection.institution_name,
+                    exc,
+                )
                 connection.status = BankConnectionStatus.ERROR.value
                 connection.last_error = str(exc)
                 await self.db.flush()

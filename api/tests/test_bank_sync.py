@@ -5,6 +5,7 @@ provider's reported balance, and re-syncs on a schedule (dedup by
 external_id, tombstone-aware, per-connection error isolation). Always uses
 `FakeBankProvider` — no real network call in this suite."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -598,6 +599,26 @@ async def test_sync_workspace_failed_link_import_does_not_write_new_provider_bal
     assert len(result["errors"]) == 1
     await db.refresh(link)
     assert link.provider_balance_minor == 100_00
+
+
+async def test_sync_workspace_logs_a_warning_for_a_failing_connection(db, initialized_instance, caplog):
+    """Finding 14: a Pluggy failure during the daily/manual sync must be
+    visible in operational logs (e.g. `docker logs`), not just swallowed
+    into errors[]/last_error — a warning naming the failing item id."""
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id, pluggy_item_id="item-broken")
+    await _link(db, ws_id, connection, account, pluggy_account_id="acc-1", sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-broken", institution_name="Bank", status="UPDATED")],
+        raise_for_items={"item-broken"},
+    )
+    svc = BankSyncService(db, provider)
+    with caplog.at_level(logging.WARNING):
+        await svc.sync_workspace(ws_id, today=TODAY)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("item-broken" in r.getMessage() for r in warnings)
 
 
 async def test_sync_workspace_isolates_one_connection_error_from_the_other(db, initialized_instance):
