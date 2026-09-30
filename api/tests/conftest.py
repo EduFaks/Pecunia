@@ -74,6 +74,13 @@ async def _pg_clean(engine):
             # CASCADE) and before categories/contacts (category_id/contact_id →
             # SET NULL) — children before parents, matching demo._TABLES.
             "scheduled_transactions",
+            # bank_category_mappings before categories (category_id → categories
+            # CASCADE); bank_account_links before accounts (account_id → accounts
+            # CASCADE) and before bank_connections (connection_id → bank_connections
+            # CASCADE) — children before parents, matching demo._TABLES.
+            "bank_category_mappings",
+            "bank_account_links",
+            "bank_connections",
             # transactions before transfers (transactions.transfer_id → transfers
             # CASCADE), and transfers before accounts (transfers.from/to_account_id
             # → accounts CASCADE) — children before parents down the transfer chain.

@@ -3,6 +3,12 @@ from pecunia.models.activity import ActivityEntry
 from pecunia.models.asset import Asset, AssetType, AssetValuation
 from pecunia.models.audit import AuditEvent
 from pecunia.models.auth_session import AuthSession, LoginAttempt
+from pecunia.models.bank_sync import (
+    BankAccountLink,
+    BankCategoryMapping,
+    BankConnection,
+    BankConnectionStatus,
+)
 from pecunia.models.base import Base
 from pecunia.models.budget import Budget, BudgetPeriod
 from pecunia.models.category import DEFAULT_CATEGORIES, PALETTE, Category, CategoryKind
@@ -31,6 +37,10 @@ __all__ = [
     "AssetValuation",
     "AuditEvent",
     "AuthSession",
+    "BankAccountLink",
+    "BankCategoryMapping",
+    "BankConnection",
+    "BankConnectionStatus",
     "Base",
     "Budget",
     "BudgetPeriod",

@@ -9,6 +9,7 @@ from pecunia.audit.actions import Actions
 from pecunia.events import DomainEvent, event_bus
 from pecunia.models.account import Account, AccountType
 from pecunia.models.asset import Asset, AssetType, AssetValuation
+from pecunia.models.bank_sync import BankAccountLink, BankCategoryMapping, BankConnection
 from pecunia.models.budget import Budget, BudgetPeriod
 from pecunia.models.category import Category
 from pecunia.models.contact import Contact
@@ -32,6 +33,16 @@ from pecunia.services.snapshots import SnapshotService
 # (never CASCADE), so deleting them after their referencing rows is a
 # defensive convention, not an FK requirement.
 _TABLES = (
+    # Bank-sync chain (Track T), leaf children, deleted before their parents:
+    # bank_category_mappings before categories (category_id → categories
+    # CASCADE); bank_account_links before accounts (account_id → accounts
+    # CASCADE) and before bank_connections (connection_id → bank_connections
+    # CASCADE). Like contacts/categories/transfers/net_worth_snapshots they
+    # live in _TABLES (counted, removed) but stay out of the manually-built
+    # `counts` the seed returns (see seed_demo_data).
+    (BankCategoryMapping, "bank_category_mappings"),
+    (BankAccountLink, "bank_account_links"),
+    (BankConnection, "bank_connections"),
     # net_worth_snapshots is a pure leaf (references only workspaces CASCADE,
     # nothing references it) so it can be deleted first. Like contacts/categories/
     # transfers it lives in _TABLES (counted, removed) but stays out of the
