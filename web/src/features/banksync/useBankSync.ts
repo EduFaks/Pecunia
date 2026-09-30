@@ -38,6 +38,7 @@ export interface BankLinkOut {
  * (via Pluggy) and its linked accounts. */
 export interface BankConnectionOut {
   id: string;
+  institution_name: string;
   status: "ok" | "error";
   last_error: string | null;
   last_synced_at: string | null;

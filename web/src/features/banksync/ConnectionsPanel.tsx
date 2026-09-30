@@ -189,7 +189,8 @@ function ConnectionsPanel() {
               >
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm text-ink-faint">
+                    <p className="font-display text-sm text-ink">{connection.institution_name}</p>
+                    <p className="mt-1 text-sm text-ink-faint">
                       Status: <span className={connection.status === "ok" ? "text-positive" : "text-negative"}>
                         {connection.status === "ok" ? "Connected" : "Error"}
                       </span>

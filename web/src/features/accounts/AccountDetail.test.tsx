@@ -197,6 +197,7 @@ describe("AccountDetail", () => {
       bankConnections: [
         {
           id: "conn1",
+          institution_name: "Test Bank",
           status: "ok",
           last_error: null,
           last_synced_at: "2026-09-11T00:00:00Z",
