@@ -25,6 +25,7 @@ from pecunia.services.transactions import (
     CategoryNotFoundError,
     ContactNotFoundError,
     CurrencyMismatchError,
+    ImportedAccountImmutableError,
     ManagedByTransferError,
     ProjectNotFoundError,
     TransactionService,
@@ -222,6 +223,8 @@ async def update_transaction(
         )
     except ManagedByTransferError:
         raise HTTPException(status_code=409, detail="MANAGED_BY_TRANSFER") from None
+    except ImportedAccountImmutableError:
+        raise HTTPException(status_code=409, detail="IMPORTED_ACCOUNT_IMMUTABLE") from None
     except AccountNotFoundError:
         raise HTTPException(status_code=404, detail="ACCOUNT_NOT_FOUND") from None
     except CategoryNotFoundError:
