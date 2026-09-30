@@ -54,6 +54,7 @@ export interface TransactionOut {
   description: string;
   occurred_on: string;
   is_demo: boolean;
+  is_imported: boolean;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;

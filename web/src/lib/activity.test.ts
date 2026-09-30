@@ -75,4 +75,15 @@ describe("renderActivity", () => {
   it("falls back gracefully when expected params are missing", () => {
     expect(renderActivity("activity.account.created", {})).toBe('Account "—" created.');
   });
+
+  it("renders activity.transaction.imported with the amount formatted per currency", () => {
+    const text = renderActivity(
+      "activity.transaction.imported",
+      { description: "Bank Transfer", amount_minor: 120000, currency: "USD" },
+      "en-US",
+    );
+    expect(text.startsWith('Transaction "Bank Transfer" imported — ')).toBe(true);
+    expect(text).toContain("1,200.00");
+    expect(text.endsWith(".")).toBe(true);
+  });
 });

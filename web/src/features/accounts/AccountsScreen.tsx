@@ -12,6 +12,7 @@ import { apiFetch } from "../../lib/api";
 import { MoneyText } from "../../lib/preferences";
 import { qk } from "../../lib/queries";
 import { sumByCurrency } from "../_shared/totals";
+import { useBankConnections } from "../banksync/useBankSync";
 import AccountForm from "./AccountForm";
 import { ACCOUNT_TYPE_LABELS } from "./accountTypes";
 import { useAccounts, useArchiveAccount } from "./useAccounts";
@@ -41,6 +42,17 @@ function AccountsScreen() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [formState, setFormState] = useState<FormState | null>(null);
   const archiveAccount = useArchiveAccount();
+  const bankConnectionsQuery = useBankConnections();
+
+  // Map of account_id -> link data for quick lookup of linked accounts
+  const linkedAccountsMap = new Map<string, boolean>();
+  if (bankConnectionsQuery.data) {
+    for (const connection of bankConnectionsQuery.data) {
+      for (const link of connection.links) {
+        linkedAccountsMap.set(link.account_id, true);
+      }
+    }
+  }
 
   // The summary header's own bounded flat read (Track P) — independent of
   // `DataList`'s keyset walk below, which only surfaces whatever page(s) the
@@ -129,37 +141,45 @@ function AccountsScreen() {
             }
           />
         }
-        renderRow={(account) => (
-          <div className="flex items-center justify-between gap-4 py-3">
-            <Link to={`/accounts/${account.id}`} className="min-w-0">
-              <p className="truncate font-sans text-sm text-ink hover:text-accent">{account.name}</p>
-              <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
-                {ACCOUNT_TYPE_LABELS[account.type] ?? account.type}
-                {account.archived_at ? " · archived" : ""}
-              </p>
-            </Link>
-            <div className="flex shrink-0 items-center gap-4">
-              <MoneyText minor={account.balance_minor} currency={account.currency} flagNegative />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setFormState({ mode: "edit", account })}
-              >
-                Edit
-              </Button>
-              {!account.archived_at ? (
+        renderRow={(account) => {
+          const isLinked = linkedAccountsMap.has(account.id);
+          return (
+            <div className="flex items-center justify-between gap-4 py-3">
+              <Link to={`/accounts/${account.id}`} className="min-w-0">
+                <p className="truncate font-sans text-sm text-ink hover:text-accent">{account.name}</p>
+                <p className="font-mono text-xs uppercase tracking-[0.1em] text-ink-faint">
+                  {ACCOUNT_TYPE_LABELS[account.type] ?? account.type}
+                  {account.archived_at ? " · archived" : ""}
+                </p>
+                {isLinked ? (
+                  <span className="mt-2 inline-flex items-center rounded-full bg-surface-1 px-2 py-1 text-xs text-ink">
+                    Open Finance
+                  </span>
+                ) : null}
+              </Link>
+              <div className="flex shrink-0 items-center gap-4">
+                <MoneyText minor={account.balance_minor} currency={account.currency} flagNegative />
                 <Button
                   variant="ghost"
                   size="sm"
-                  loading={archiveAccount.isPending}
-                  onClick={() => void handleArchive(account)}
+                  onClick={() => setFormState({ mode: "edit", account })}
                 >
-                  Archive
+                  Edit
                 </Button>
-              ) : null}
+                {!account.archived_at ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    loading={archiveAccount.isPending}
+                    onClick={() => void handleArchive(account)}
+                  >
+                    Archive
+                  </Button>
+                ) : null}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        }}
       />
     </div>
   );

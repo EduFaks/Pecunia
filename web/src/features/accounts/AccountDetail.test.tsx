@@ -8,6 +8,7 @@ import AccountDetail from "./AccountDetail";
 import type { AccountOut } from "./useAccounts";
 import type { TransactionOut } from "../transactions/useTransactions";
 import type { TransferOut } from "../transfers/useTransfers";
+import type { BankConnectionOut } from "../banksync/useBankSync";
 
 vi.mock("../../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/api")>();
@@ -40,6 +41,7 @@ const TRANSACTION: TransactionOut = {
   description: "Groceries",
   occurred_on: "2026-09-10",
   is_demo: false,
+  is_imported: false,
   deleted_at: null,
   created_at: "2026-09-10T00:00:00Z",
   updated_at: "2026-09-10T00:00:00Z",
@@ -51,6 +53,7 @@ function installFakeBackend(
     transactions?: TransactionOut[];
     accounts?: AccountOut[];
     transfers?: TransferOut[];
+    bankConnections?: BankConnectionOut[];
   } = {},
 ) {
   let balance = options.account?.balance_minor ?? ACCOUNT.balance_minor;
@@ -64,6 +67,9 @@ function installFakeBackend(
     }
     if (path.startsWith("/accounts?") && method === "GET") {
       return Promise.resolve({ items: options.accounts ?? [options.account ?? ACCOUNT], next_cursor: null });
+    }
+    if (path.startsWith("/bank-sync/connections") && method === "GET") {
+      return Promise.resolve(options.bankConnections ?? []);
     }
     if (path.startsWith("/transfers?") && method === "GET") {
       return Promise.resolve({ items: options.transfers ?? [], next_cursor: null });
@@ -82,7 +88,7 @@ function installFakeBackend(
     }
     if (path === "/transactions" && method === "POST") {
       const body = opts?.json as TransactionOut;
-      const created: TransactionOut = { ...TRANSACTION, ...body, id: "t-new" };
+      const created: TransactionOut = { ...TRANSACTION, ...body, id: "t-new", is_imported: false };
       transactions.unshift(created);
       balance += created.amount_minor;
       return Promise.resolve(created);
@@ -182,5 +188,46 @@ describe("AccountDetail", () => {
     // "Uncategorized" text elsewhere on the page belongs to the always-present
     // Add-transaction form's category picker, so scope the check to the row).
     expect(within(row).queryByText("Uncategorized")).not.toBeInTheDocument();
+  });
+
+  it("shows a linked credit card's credit limit, bill close date, and due date", async () => {
+    const creditCard: AccountOut = { ...ACCOUNT, id: "a1", type: "credit_card" };
+    installFakeBackend({
+      account: creditCard,
+      bankConnections: [
+        {
+          id: "conn1",
+          status: "ok",
+          last_error: null,
+          last_synced_at: "2026-09-11T00:00:00Z",
+          links: [
+            {
+              id: "link1",
+              account_id: "a1",
+              account_name: "Credit Card",
+              account_currency: "USD",
+              pluggy_account_id: "plug123",
+              sync_from: "2026-09-10",
+              provider_balance_minor: -50000,
+              provider_balance_as_of: "2026-09-11T00:00:00Z",
+              derived_balance_minor: -50000,
+              credit_limit_minor: 500000,
+              bill_close_date: "2026-09-25",
+              bill_due_date: "2026-10-15",
+            },
+          ],
+        },
+      ],
+    });
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Everyday checking" });
+    expect(screen.getByText(/5,000\.00/)).toBeInTheDocument(); // credit limit
+    expect(screen.getByText("Credit limit:")).toBeInTheDocument();
+    expect(screen.getByText("Bill close:")).toBeInTheDocument();
+    expect(screen.getByText("Due date:")).toBeInTheDocument();
+    // DateText renders in numeric format by default (MM/DD/YYYY)
+    expect(screen.getByText(/09\/25\/2026/)).toBeInTheDocument();
+    expect(screen.getByText(/10\/15\/2026/)).toBeInTheDocument();
   });
 });

@@ -73,6 +73,11 @@ const RENDERERS: Record<string, Renderer> = {
     const currency = str(params, "currency", "USD");
     return `Transaction "${description}" recorded — ${money(params, "amount_minor", currency, locale)}.`;
   },
+  "activity.transaction.imported": (params, locale) => {
+    const description = str(params, "description");
+    const currency = str(params, "currency", "USD");
+    return `Transaction "${description}" imported — ${money(params, "amount_minor", currency, locale)}.`;
+  },
   "activity.asset.created": (params) => {
     const name = str(params, "name");
     const type = typeof params.type === "string" ? params.type : undefined;
