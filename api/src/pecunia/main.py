@@ -14,6 +14,7 @@ from pecunia.api.analytics import router as analytics_router
 from pecunia.api.assets import router as assets_router
 from pecunia.api.audit import router as audit_router
 from pecunia.api.auth import router as auth_router
+from pecunia.api.banksync import router as banksync_router
 from pecunia.api.budgets import router as budgets_router
 from pecunia.api.categories import router as categories_router
 from pecunia.api.contacts import router as contacts_router
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(assets_router, prefix="/api/v1")
     app.include_router(portfolios_router, prefix="/api/v1")
     app.include_router(loans_router, prefix="/api/v1")
+    app.include_router(banksync_router, prefix="/api/v1")
     app.include_router(budgets_router, prefix="/api/v1")
     app.include_router(categories_router, prefix="/api/v1")
     app.include_router(contacts_router, prefix="/api/v1")
