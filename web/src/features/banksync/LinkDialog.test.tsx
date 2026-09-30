@@ -21,7 +21,7 @@ function installFakeBackend() {
       if (path === "/auth/me") {
         return Promise.resolve({ user: null, preferences: null });
       }
-      if (path === "/bank-sync/discovery" && method === "GET") {
+      if (path.startsWith("/bank-sync/discovery") && method === "GET") {
         return Promise.resolve([
           {
             pluggy_item_id: "item1",
@@ -46,7 +46,7 @@ function installFakeBackend() {
           },
         ]);
       }
-      if (path === "/accounts" && method === "GET") {
+      if (path.startsWith("/accounts") && method === "GET") {
         return Promise.resolve({
           items: [
             {
@@ -71,7 +71,7 @@ function installFakeBackend() {
           next_cursor: null,
         });
       }
-      if (path === "/bank-sync/links" && method === "POST") {
+      if (path.startsWith("/bank-sync/links") && method === "POST") {
         const body = opts?.json as Record<string, unknown>;
         if (body.account_id) {
           return Promise.resolve({
@@ -162,7 +162,7 @@ describe("LinkDialog", () => {
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
     const options = discoverSelect.querySelectorAll("option");
     const linkedOption = Array.from(options).find((opt) => opt.textContent?.includes("acct-cc-1"));
-    expect(linkedOption).not.toBeInTheDocument();
+    expect(linkedOption).toBeUndefined();
 
     const unlinkedOptions = Array.from(options).filter((opt) =>
       ["acct-bank-1", "acct-bank-2"].some((id) => opt.textContent?.includes(id)),
@@ -182,7 +182,7 @@ describe("LinkDialog", () => {
     const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
     const accountOptions = pecuniaSelect.querySelectorAll("option");
     const eurOption = Array.from(accountOptions).find((opt) => opt.textContent?.includes("Savings EUR"));
-    expect(eurOption).not.toBeInTheDocument();
+    expect(eurOption).toBeUndefined();
 
     const usdOptions = Array.from(accountOptions).filter((opt) =>
       ["Checking", "Credit Card"].some((name) => opt.textContent?.includes(name)),

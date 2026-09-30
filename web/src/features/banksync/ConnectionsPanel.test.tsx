@@ -60,10 +60,10 @@ function installFakeBackend() {
       if (path === "/auth/me") {
         return Promise.resolve({ user: null, preferences: null });
       }
-      if (path === "/bank-sync/connections" && method === "GET") {
+      if (path.startsWith("/bank-sync/connections") && method === "GET") {
         return Promise.resolve([CONNECTION]);
       }
-      if (path === "/bank-sync/sync" && method === "POST") {
+      if (path.startsWith("/bank-sync/sync") && method === "POST") {
         return Promise.resolve({
           connections: 1,
           created: 2,
@@ -71,12 +71,12 @@ function installFakeBackend() {
           errors: [],
         });
       }
-      if (path === "/bank-sync/links/link1/reconcile" && method === "POST") {
+      if (path.startsWith("/bank-sync/links/link2/reconcile") && method === "POST") {
         return Promise.resolve({
           id: "tx1",
-          account_id: "acct1",
+          account_id: "acct2",
           description: "Reconcile transaction",
-          amount_minor: 0,
+          amount_minor: 100_000,
           currency: "USD",
           date: "2026-09-30",
           type: "transfer",
@@ -86,10 +86,10 @@ function installFakeBackend() {
           created_at: "2026-09-30T10:00:00Z",
         });
       }
-      if (path === "/bank-sync/links/link1" && method === "DELETE") {
+      if (path.startsWith("/bank-sync/links/link2") && method === "DELETE") {
         return Promise.resolve(undefined);
       }
-      if (path === "/bank-sync/connections/conn1" && method === "DELETE") {
+      if (path.startsWith("/bank-sync/connections/conn1") && method === "DELETE") {
         return Promise.resolve(undefined);
       }
       return Promise.reject(new Error(`unexpected call: ${method} ${path}`));
@@ -157,17 +157,18 @@ describe("ConnectionsPanel", () => {
   it("confirms before reconciling a link", async () => {
     renderPanel();
 
-    // Find reconcile button in the Checking row
-    const checkingRow = (await screen.findByText("Checking")).closest("li");
-    const reconcileButton = within(checkingRow!).getByRole("button", { name: /reconcile/i });
+    // Find reconcile button in the Savings row (which has divergence)
+    const savingsRow = (await screen.findByText("Savings")).closest("li");
+    const reconcileButton = within(savingsRow!).getByRole("button", { name: /reconcile/i });
     fireEvent.click(reconcileButton);
 
-    // Confirm dialog should appear
-    const confirmButton = await screen.findByRole("button", { name: /confirm|reconcile/i });
+    // Confirm dialog should appear - find the confirm button in the dialog
+    const confirmDialog = await screen.findByRole("alertdialog");
+    const confirmButton = within(confirmDialog).getByRole("button", { name: /reconcile/i });
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
-      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/links/link1/reconcile", {
+      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/links/link2/reconcile", {
         method: "POST",
       });
     });
@@ -178,13 +179,14 @@ describe("ConnectionsPanel", () => {
   it("unlinks a connection", async () => {
     renderPanel();
 
-    // Find the delete button for Checking link
+    // Find the unlink button for Checking link (using within to scope)
     const checkingRow = (await screen.findByText("Checking")).closest("li");
-    const deleteButton = within(checkingRow!).getByRole("button", { name: /delete|unlink|remove/i });
-    fireEvent.click(deleteButton);
+    const unlinkButton = within(checkingRow!).getByRole("button", { name: /unlink/i });
+    fireEvent.click(unlinkButton);
 
-    // Confirm dialog
-    const confirmButton = await screen.findByRole("button", { name: /confirm|delete|unlink/i });
+    // Confirm dialog - find within the dialog
+    const confirmDialog = await screen.findByRole("alertdialog");
+    const confirmButton = within(confirmDialog).getByRole("button", { name: /unlink/i });
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
@@ -196,11 +198,12 @@ describe("ConnectionsPanel", () => {
     renderPanel();
 
     // Find the delete connection button
-    const deleteConnButton = await screen.findByRole("button", { name: /delete connection|disconnect/i });
+    const deleteConnButton = await screen.findByRole("button", { name: /delete connection/i });
     fireEvent.click(deleteConnButton);
 
-    // Confirm dialog
-    const confirmButton = await screen.findByRole("button", { name: /confirm|delete/i });
+    // Confirm dialog - find within the dialog
+    const confirmDialog = await screen.findByRole("alertdialog");
+    const confirmButton = within(confirmDialog).getByRole("button", { name: /delete connection/i });
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
