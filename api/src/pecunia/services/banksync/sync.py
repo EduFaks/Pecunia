@@ -354,7 +354,6 @@ class BankSyncService:
                 errors.append(str(exc))
                 connection.status = BankConnectionStatus.ERROR.value
                 connection.last_error = str(exc)
-                connection.last_synced_at = datetime.now(UTC)
                 await self.db.flush()
                 await event_bus.publish(
                     self.db,

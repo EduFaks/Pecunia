@@ -28,6 +28,7 @@ from pecunia.services.banksync.provider import (
     ProviderTransaction,
 )
 from pecunia.services.banksync.sync import (
+    SYNC_OVERLAP_DAYS,
     AccountAlreadyLinkedError,
     BankSyncService,
     PluggyAccountAlreadyLinkedError,
@@ -564,6 +565,79 @@ async def test_sync_workspace_isolates_one_connection_error_from_the_other(db, i
     actions = await _actions(db)
     assert Actions.BANK_SYNC_COMPLETED in actions
     assert Actions.BANK_SYNC_FAILED in actions
+
+
+async def test_sync_workspace_failed_round_does_not_advance_last_synced_at(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+
+    # Seed a real prior successful sync so last_synced_at has a genuine value.
+    ok_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, ok_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    await db.refresh(connection)
+    seeded_last_synced_at = connection.last_synced_at
+    assert seeded_last_synced_at is not None
+
+    # Now a round where the provider fails outright for this item.
+    bad_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        raise_for_items={"item-1"},
+    )
+    result = await BankSyncService(db, bad_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    assert len(result["errors"]) == 1
+
+    await db.refresh(connection)
+    assert connection.last_synced_at == seeded_last_synced_at
+
+
+async def test_sync_workspace_recovery_window_uses_pre_failure_last_synced_at(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+
+    # Seed a real prior successful sync, then pin its persisted timestamp to
+    # a known past date — makes the 7-day overlap window assertion below
+    # unambiguous instead of depending on which wall-clock instant the test
+    # happens to run at.
+    ok_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, ok_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    connection.last_synced_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    await db.commit()
+
+    # A round where the provider fails outright — must not move last_synced_at.
+    bad_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        raise_for_items={"item-1"},
+    )
+    await BankSyncService(db, bad_provider).sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+
+    # Recovery: the window must be computed from the pre-failure timestamp
+    # (2026-09-01), not from whatever real time the failed round's `except`
+    # block would have stamped — otherwise a gap opens between the two.
+    recovery_provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={"acc-1": []},
+    )
+    await BankSyncService(db, recovery_provider).sync_workspace(ws_id, today=TODAY)
+
+    expected_from = date(2026, 9, 1) - timedelta(days=SYNC_OVERLAP_DAYS)
+    assert recovery_provider.transaction_calls == [("acc-1", expected_from)]
 
 
 async def test_sync_workspace_item_login_error_marks_connection_error_with_raw_status(db, initialized_instance):
