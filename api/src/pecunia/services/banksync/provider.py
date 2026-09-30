@@ -22,6 +22,12 @@ PLUGGY_BASE_URL = "https://api.pluggy.ai"
 # to this many rows per page.
 _PAGE_SIZE = 500
 
+# A hard ceiling on pages followed for one _get_paged call — guards against a
+# cursor that keeps legitimately advancing but never actually terminates
+# (finding 9). 200 pages * 500/page is comfortably beyond any personal-scale
+# workspace's item/transaction volume.
+_MAX_PAGES = 200
+
 
 class BankProviderError(Exception):
     """Any Pluggy failure — HTTP status (incl. 429), timeout, auth, bad JSON.
@@ -164,22 +170,34 @@ class PluggyProvider:
     async def _get_paged(self, path: str, params: dict[str, object]) -> list[dict]:
         query: dict[str, object] = {**params, "pageSize": _PAGE_SIZE}
         results: list[dict] = []
-        while True:
+        previous_after: str | None = None
+        for _ in range(_MAX_PAGES):
             page = await self._get(path, query)
             if not isinstance(page, dict):
                 raise BankProviderError(f"Pluggy paged response from {path} wasn't a JSON object")
             results.extend(page.get("results") or [])
             next_value = page.get("next")
             if not next_value:
-                break
+                return results
             try:
                 after_token = _extract_after(next_value)
             except (KeyError, ValueError, TypeError) as exc:
                 raise BankProviderError(
                     f"Pluggy pagination cursor parsing failed for {path}: {exc}"
                 ) from exc
-            query = {**params, "after": after_token}
-        return results
+            # A cursor that doesn't advance would otherwise spin forever —
+            # guard against a misbehaving/looping feed (finding 9).
+            if after_token == previous_after:
+                raise BankProviderError(
+                    f"Pluggy pagination for {path} returned a repeated cursor {after_token!r}"
+                )
+            previous_after = after_token
+            # `pageSize` must be re-sent on every page, not just the first —
+            # dropping it lets Pluggy fall back to its own (much smaller)
+            # default page size, ballooning the number of requests
+            # (finding 9).
+            query = {**params, "after": after_token, "pageSize": _PAGE_SIZE}
+        raise BankProviderError(f"Pluggy pagination for {path} exceeded {_MAX_PAGES} pages")
 
     async def fetch_connections(self) -> list[ProviderConnection]:
         rows = await self._get_paged("/v2/items", {})

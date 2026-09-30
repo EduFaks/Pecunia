@@ -271,6 +271,81 @@ async def test_pagination_first_page_requests_page_size_500():
     assert seen_params["pageSize"] == "500"
 
 
+async def test_pagination_second_page_request_still_carries_page_size_500():
+    """Finding 9: the `after` param must not replace `pageSize` on later
+    pages — dropping it lets Pluggy fall back to its own (much smaller)
+    default page size, ballooning the number of requests."""
+    seen_page_sizes = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        seen_page_sizes.append(params.get("pageSize"))
+        if "after" not in params:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
+                    "next": "?after=tok-1&pageSize=500",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "i2", "status": "UPDATED", "connector": {"name": "B"}}],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    await provider.fetch_connections()
+    assert seen_page_sizes == ["500", "500"]
+
+
+async def test_pagination_repeated_cursor_raises_bank_provider_error():
+    """Finding 9: a `next` cursor that never advances (Pluggy returning the
+    same `after` token again) must not spin forever — it's a provider
+    misbehavior, surfaced as a BankProviderError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
+                "next": "?after=tok-stuck&pageSize=500",
+            },
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connections()
+
+
+async def test_pagination_exceeding_page_cap_raises_bank_provider_error():
+    """Finding 9: even a cursor that keeps legitimately advancing must not
+    loop unbounded — a page cap guards against a runaway or malicious feed."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        calls["n"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": f"i{calls['n']}", "status": "UPDATED", "connector": {"name": "A"}}],
+                "next": f"?after=tok-{calls['n']}&pageSize=500",
+            },
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connections()
+
+
 # --------------------------------------------------------------------------- #
 # fetch_connections — missing connector fallback
 # --------------------------------------------------------------------------- #
