@@ -15,6 +15,12 @@ if not os.path.exists("/var/run/docker.sock"):
 # `Settings(enable_price_sync=...)` directly, which overrides this.
 os.environ.setdefault("PECUNIA_ENABLE_PRICE_SYNC", "false")
 
+# Same belt-and-braces, for the daily bank sync (Track T) — also on by
+# default (though inert without Pluggy credentials, which tests never set
+# either). test_scheduler.py constructs its own
+# `Settings(enable_bank_sync=...)` directly, which overrides this.
+os.environ.setdefault("PECUNIA_ENABLE_BANK_SYNC", "false")
+
 import httpx
 import pytest
 import sqlalchemy as sa

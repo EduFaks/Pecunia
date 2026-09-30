@@ -47,13 +47,21 @@ access.
 
 ## Operating Pecunia
 
-**Network egress** — Pecunia runs fully offline, with one exception: the
+**Network egress** — Pecunia runs fully offline, with two exceptions: the
 optional crypto price sync, which makes outbound HTTPS calls to CoinGecko
 (`api.coingecko.com`) to price portfolio holdings. It's on by default; disable
 it with `PECUNIA_ENABLE_PRICE_SYNC=false`. The on-demand "Update prices"
 button on a portfolio and the holding form's coin picker also reach CoinGecko
 directly, regardless of that setting — everything else never leaves your
 server.
+
+The second exception is the optional bank sync, which makes outbound HTTPS
+calls to Pluggy (`api.pluggy.ai`) to import transactions from linked bank
+accounts. It's off in practice unless you set both `PECUNIA_PLUGGY_CLIENT_ID`
+and `PECUNIA_PLUGGY_CLIENT_SECRET` — with either empty, no Pluggy call is ever
+made, regardless of `PECUNIA_ENABLE_BANK_SYNC` (on by default, but inert
+without both credentials). Those credentials live only in your local `.env`
+and are never committed.
 
 **Health check** — diagnose an instance:
 
