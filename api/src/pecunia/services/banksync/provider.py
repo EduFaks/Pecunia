@@ -206,15 +206,17 @@ class PluggyProvider:
             # Pluggy's card `balance` is the amount OWED; Pecunia stores a
             # credit-card balance as a negative figure.
             balance_minor = -balance_minor
-        credit_data = row.get("creditData")
-        if credit_data:
-            credit_limit_minor = _to_minor(credit_data["creditLimit"], currency)
-            bill_close_date = date.fromisoformat(credit_data["balanceCloseDate"][:10])
-            bill_due_date = date.fromisoformat(credit_data["balanceDueDate"][:10])
-        else:
-            credit_limit_minor = None
-            bill_close_date = None
-            bill_due_date = None
+        # Each creditData member is independently optional — Pluggy may not
+        # yet have a limit, or a billing-cycle date, even while the object
+        # itself is present (finding 8: don't assume "creditData present"
+        # means "every field in it is present").
+        credit_data = row.get("creditData") or {}
+        credit_limit = credit_data.get("creditLimit")
+        credit_limit_minor = _to_minor(credit_limit, currency) if credit_limit is not None else None
+        close_date = credit_data.get("balanceCloseDate")
+        bill_close_date = date.fromisoformat(close_date[:10]) if close_date else None
+        due_date = credit_data.get("balanceDueDate")
+        bill_due_date = date.fromisoformat(due_date[:10]) if due_date else None
         return ProviderAccount(
             pluggy_account_id=row["id"],
             item_id=item_id,

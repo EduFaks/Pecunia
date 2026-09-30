@@ -372,6 +372,81 @@ async def test_fetch_accounts_negates_credit_card_balance_and_maps_credit_data()
     assert account.bill_due_date == date(2026, 9, 27)
 
 
+async def test_fetch_accounts_tolerates_partial_credit_data_with_null_limit():
+    """Finding 8: a creditData object with some members null (e.g. Pluggy
+    hasn't reported a credit limit yet) must not crash — each of
+    limit/close/due is independently optional."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "acc-partial",
+                        "type": "CREDIT",
+                        "subtype": "CREDIT_CARD",
+                        "name": "Card",
+                        "number": "2222",
+                        "balance": 100.0,
+                        "currencyCode": "BRL",
+                        "creditData": {
+                            "creditLimit": None,
+                            "balanceCloseDate": "2026-09-20T00:00:00.000Z",
+                            "balanceDueDate": "2026-09-27T00:00:00.000Z",
+                        },
+                    }
+                ]
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_accounts("item-partial")
+    account = result[0]
+    assert account.credit_limit_minor is None
+    assert account.bill_close_date == date(2026, 9, 20)
+    assert account.bill_due_date == date(2026, 9, 27)
+
+
+async def test_fetch_accounts_tolerates_partial_credit_data_with_null_dates():
+    """Finding 8: the close/due dates can independently be null (e.g. a
+    limit is known but the current billing cycle hasn't been computed yet)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "acc-partial-2",
+                        "type": "CREDIT",
+                        "subtype": "CREDIT_CARD",
+                        "name": "Card",
+                        "number": "3333",
+                        "balance": 100.0,
+                        "currencyCode": "BRL",
+                        "creditData": {
+                            "creditLimit": 1000.0,
+                            "balanceCloseDate": None,
+                            "balanceDueDate": None,
+                        },
+                    }
+                ]
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_accounts("item-partial-2")
+    account = result[0]
+    assert account.credit_limit_minor == 100_000
+    assert account.bill_close_date is None
+    assert account.bill_due_date is None
+
+
 async def test_fetch_accounts_missing_number_is_none():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/auth":
