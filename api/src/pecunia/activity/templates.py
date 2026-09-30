@@ -3,6 +3,7 @@ class Activity:
 
     ACCOUNT_CREATED = "activity.account.created"
     TRANSACTION_CREATED = "activity.transaction.created"
+    TRANSACTION_IMPORTED = "activity.transaction.imported"
     TRANSFER_CREATED = "activity.transfer.created"
     PROJECT_CREATED = "activity.project.created"
     PROJECT_TARGET_REACHED = "activity.project.target_reached"

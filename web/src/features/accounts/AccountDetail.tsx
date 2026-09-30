@@ -7,6 +7,7 @@ import { useToast } from "../../components/ui/Toast";
 import { apiFetch } from "../../lib/api";
 import { DateText, MoneyText } from "../../lib/preferences";
 import { qk } from "../../lib/queries";
+import { useBankConnections } from "../banksync/useBankSync";
 import CategoryBadge from "../categories/CategoryBadge";
 import { useCategories } from "../categories/useCategories";
 import ContactBadge from "../contacts/ContactBadge";
@@ -39,6 +40,15 @@ function AccountDetail() {
   const { id } = useParams<{ id: string }>();
   const { showToast } = useToast();
   const accountQuery = useAccount(id);
+  const bankConnectionsQuery = useBankConnections();
+
+  // Find the bank link for this account (if any)
+  const accountLink = bankConnectionsQuery.data
+    ? bankConnectionsQuery.data
+        .flatMap((conn) => conn.links)
+        .find((link) => link.account_id === id)
+    : undefined;
+
   // Archived categories included — same rationale as `TransactionsScreen`'s
   // `useCategories(true)`.
   const categoriesQuery = useCategories(true);
@@ -104,6 +114,25 @@ function AccountDetail() {
           variant="hero"
           className="mt-2 block text-3xl"
         />
+        {accountLink && account.type === "credit_card" ? (
+          <div className="mt-4 space-y-2 text-sm text-ink-faint">
+            {accountLink.credit_limit_minor !== null ? (
+              <p>
+                Credit limit: <MoneyText minor={accountLink.credit_limit_minor} currency={accountLink.account_currency} className="font-mono text-ink" />
+              </p>
+            ) : null}
+            {accountLink.bill_close_date ? (
+              <p>
+                Bill close: <DateText iso={accountLink.bill_close_date} />
+              </p>
+            ) : null}
+            {accountLink.bill_due_date ? (
+              <p>
+                Due date: <DateText iso={accountLink.bill_due_date} />
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6">

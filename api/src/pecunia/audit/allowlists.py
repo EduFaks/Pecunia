@@ -13,7 +13,7 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     "transaction": frozenset(
         {
             "id", "account_id", "category_id", "contact_id", "project_id", "transfer_id",
-            "amount_minor", "currency", "description", "occurred_on", "is_demo",
+            "amount_minor", "currency", "description", "occurred_on", "is_demo", "external_id",
         }
     ),
     "transfer": frozenset(
@@ -82,6 +82,16 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
             "category_id", "is_demo",
         }
     ),
+    "bank_connection": frozenset(
+        {"id", "pluggy_item_id", "institution_name", "status", "last_error", "is_demo"}
+    ),
+    "bank_account_link": frozenset(
+        {
+            "id", "connection_id", "account_id", "pluggy_account_id", "sync_from",
+            "provider_balance_minor", "is_demo",
+        }
+    ),
+    "bank_category_mapping": frozenset({"id", "pluggy_category", "category_id", "is_demo"}),
 }
 
 

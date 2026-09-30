@@ -91,3 +91,11 @@ class Actions:
     DATA_EXPORTED = "data.exported"
     DATA_DEMO_SEEDED = "data.demo_seeded"
     DATA_DEMO_REMOVED = "data.demo_removed"
+    # bank sync (Track T)
+    BANK_CONNECTION_CREATED = "bank_connection.created"
+    BANK_CONNECTION_DELETED = "bank_connection.deleted"
+    BANK_ACCOUNT_LINKED = "bank_account.linked"
+    BANK_ACCOUNT_UNLINKED = "bank_account.unlinked"
+    BANK_SYNC_COMPLETED = "bank_sync.completed"
+    BANK_SYNC_FAILED = "bank_sync.failed"
+    BANK_CATEGORY_MAPPINGS_REPLACED = "bank_category_mapping.replaced"

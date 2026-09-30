@@ -7,6 +7,8 @@ import { ToastProvider } from "../../components/ui/Toast";
 import AccountsScreen from "./AccountsScreen";
 import type { AccountOut } from "./useAccounts";
 
+import type { BankConnectionOut } from "../banksync/useBankSync";
+
 vi.mock("../../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/api")>();
   return { ...actual, apiFetch: vi.fn() };
@@ -27,7 +29,7 @@ function seedAccounts(seed: AccountOut[]) {
 /** A tiny stateful fake of the `/accounts` API — real enough that create
  * (POST) then list (GET, refetched after `useCreateAccount`'s invalidation)
  * demonstrates the round trip end to end, same for archive. */
-function installFakeBackend() {
+function installFakeBackend(bankConnections: BankConnectionOut[] = []) {
   mockApiFetch.mockReset().mockImplementation((path: string, opts?: { method?: string; json?: unknown }) => {
     const method = opts?.method ?? "GET";
 
@@ -35,6 +37,9 @@ function installFakeBackend() {
       const includeArchived = path.includes("include_archived=true");
       const items = accounts.filter((a) => includeArchived || a.archived_at === null);
       return Promise.resolve({ items, next_cursor: null });
+    }
+    if (path.startsWith("/bank-sync/connections") && method === "GET") {
+      return Promise.resolve(bankConnections);
     }
     if (path === "/accounts" && method === "POST") {
       const body = opts?.json as { name: string; type: string; currency: string; initial_balance_minor?: number };
@@ -217,5 +222,46 @@ describe("AccountsScreen", () => {
     fireEvent.click(await screen.findByText("Everyday"));
 
     expect(await screen.findByText("Account detail screen")).toBeInTheDocument();
+  });
+
+  it("shows an 'Open Finance' chip on a linked account", async () => {
+    seedAccounts([CHECKING]);
+    installFakeBackend([
+      {
+        id: "conn1",
+        status: "ok",
+        last_error: null,
+        last_synced_at: "2026-09-11T00:00:00Z",
+        links: [
+          {
+            id: "link1",
+            account_id: "a1",
+            account_name: "Checking",
+            account_currency: "USD",
+            pluggy_account_id: "plug123",
+            sync_from: "2026-09-10",
+            provider_balance_minor: 150000,
+            provider_balance_as_of: "2026-09-11T00:00:00Z",
+            derived_balance_minor: 150000,
+            credit_limit_minor: null,
+            bill_close_date: null,
+            bill_due_date: null,
+          },
+        ],
+      },
+    ]);
+    renderScreen();
+
+    const row = (await screen.findByText("Everyday")).closest("li")!;
+    expect(within(row).getByText("Open Finance")).toBeInTheDocument();
+  });
+
+  it("does not show an 'Open Finance' chip on an unlinked account", async () => {
+    seedAccounts([CHECKING]);
+    installFakeBackend([]);
+    renderScreen();
+
+    const row = (await screen.findByText("Everyday")).closest("li")!;
+    expect(within(row).queryByText("Open Finance")).not.toBeInTheDocument();
   });
 });

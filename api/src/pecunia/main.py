@@ -14,6 +14,7 @@ from pecunia.api.analytics import router as analytics_router
 from pecunia.api.assets import router as assets_router
 from pecunia.api.audit import router as audit_router
 from pecunia.api.auth import router as auth_router
+from pecunia.api.banksync import router as banksync_router
 from pecunia.api.budgets import router as budgets_router
 from pecunia.api.categories import router as categories_router
 from pecunia.api.contacts import router as contacts_router
@@ -32,7 +33,7 @@ from pecunia.api.transfers import router as transfers_router
 from pecunia.config import get_settings
 from pecunia.db import init_engine
 from pecunia.events import event_bus
-from pecunia.scheduler import start_price_sync_task
+from pecunia.scheduler import start_bank_sync_task, start_price_sync_task
 from pecunia.secrets import resolve_secret_key
 from pecunia.security.session_cache import SessionCache
 from pecunia.services.subscribers import register_subscribers
@@ -73,6 +74,12 @@ async def lifespan(app: FastAPI):
     price_sync_task = start_price_sync_task(settings, sessionmaker)
     app.state.price_sync_task = price_sync_task
 
+    # Daily bank sync (Track T) — gated by PECUNIA_ENABLE_BANK_SYNC and both
+    # Pluggy credentials; `None` when disabled, so there is nothing to cancel
+    # on shutdown.
+    bank_sync_task = start_bank_sync_task(settings, sessionmaker)
+    app.state.bank_sync_task = bank_sync_task
+
     yield
 
     # Cancel the sweep task on shutdown
@@ -86,6 +93,13 @@ async def lifespan(app: FastAPI):
         price_sync_task.cancel()
         try:
             await price_sync_task
+        except asyncio.CancelledError:
+            pass
+
+    if bank_sync_task is not None:
+        bank_sync_task.cancel()
+        try:
+            await bank_sync_task
         except asyncio.CancelledError:
             pass
 
@@ -111,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(assets_router, prefix="/api/v1")
     app.include_router(portfolios_router, prefix="/api/v1")
     app.include_router(loans_router, prefix="/api/v1")
+    app.include_router(banksync_router, prefix="/api/v1")
     app.include_router(budgets_router, prefix="/api/v1")
     app.include_router(categories_router, prefix="/api/v1")
     app.include_router(contacts_router, prefix="/api/v1")

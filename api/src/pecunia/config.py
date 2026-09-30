@@ -17,6 +17,16 @@ class Settings(BaseSettings):
     # offline / no-egress deployment. The on-demand refresh endpoint works
     # regardless of this flag.
     enable_price_sync: bool = True
+    # Pluggy API credentials (Track T bank sync). Empty means the bank
+    # provider is unavailable — `banksync.get_bank_provider` returns 503
+    # rather than constructing a `PluggyProvider` with blank credentials.
+    pluggy_client_id: str = ""
+    pluggy_client_secret: str = ""
+    # Gates the daily in-process bank sync (Track T) — mirrors
+    # enable_price_sync. On by default, but inert without both Pluggy
+    # credentials above: start_bank_sync_task only starts the loop when the
+    # flag AND both credentials are set.
+    enable_bank_sync: bool = True
 
     @property
     def trusted_proxies(self) -> list[str]:

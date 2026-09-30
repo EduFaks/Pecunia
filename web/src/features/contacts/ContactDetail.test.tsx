@@ -74,6 +74,7 @@ const TRANSACTION: TransactionOut = {
   description: "Weekly shop",
   occurred_on: "2026-09-10",
   is_demo: false,
+  is_imported: false,
   deleted_at: null,
   created_at: "2026-09-10T00:00:00Z",
   updated_at: "2026-09-10T00:00:00Z",

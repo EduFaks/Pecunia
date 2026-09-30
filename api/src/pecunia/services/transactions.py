@@ -101,6 +101,7 @@ class TransactionService:
         category_id: uuid.UUID | None = None,
         contact_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
+        external_id: str | None = None,
     ) -> Transaction:
         await self._validate_account(workspace_id, account_id, currency)
         contact_row = (
@@ -137,18 +138,24 @@ class TransactionService:
             currency=currency,
             description=description,
             occurred_on=occurred_on,
+            external_id=external_id,
         )
         self.db.add(transaction)
         await self.db.flush()
+        # A synced transaction (external_id set — Track T bank sync) is audited
+        # and surfaced in the activity feed as "imported" rather than
+        # "created"; a manual transaction (external_id None) is byte-for-byte
+        # unchanged from before this parameter existed.
+        is_imported = external_id is not None
         await event_bus.publish(
             self.db,
             DomainEvent(
-                action=Actions.TRANSACTION_CREATED,
+                action=Actions.TRANSACTION_IMPORTED if is_imported else Actions.TRANSACTION_CREATED,
                 resource_type="transaction",
                 resource_id=str(transaction.id),
                 workspace_id=workspace_id,
                 after=project("transaction", transaction),
-                activity_template=Activity.TRANSACTION_CREATED,
+                activity_template=Activity.TRANSACTION_IMPORTED if is_imported else Activity.TRANSACTION_CREATED,
                 activity_params={
                     "description": transaction.description,
                     "amount_minor": transaction.amount_minor,

@@ -343,6 +343,11 @@ function TransactionsScreen() {
                       ) : null}
                     </>
                   )}
+                  {transaction.is_imported ? (
+                    <span className="inline-flex items-center rounded-full bg-surface-1 px-2 py-1 text-xs text-ink-faint" title="Imported via Open Finance">
+                      OF
+                    </span>
+                  ) : null}
                 </div>
               </div>
               {/* `w-full`+`justify-between` keeps the amount pinned left and

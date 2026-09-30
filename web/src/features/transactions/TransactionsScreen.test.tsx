@@ -65,6 +65,7 @@ const GROCERIES: TransactionOut = {
   description: "Groceries",
   occurred_on: "2026-09-10",
   is_demo: false,
+  is_imported: false,
   deleted_at: null,
   created_at: "2026-09-10T00:00:00Z",
   updated_at: "2026-09-10T00:00:00Z",
@@ -82,6 +83,7 @@ const PAYCHECK: TransactionOut = {
   description: "Paycheck",
   occurred_on: "2026-09-09",
   is_demo: false,
+  is_imported: false,
   deleted_at: null,
   created_at: "2026-09-09T00:00:00Z",
   updated_at: "2026-09-09T00:00:00Z",
@@ -128,6 +130,7 @@ const OUT_LEG: TransactionOut = {
   description: "Move to savings",
   occurred_on: "2026-09-11",
   is_demo: false,
+  is_imported: false,
   deleted_at: null,
   created_at: "2026-09-11T00:00:00Z",
   updated_at: "2026-09-11T00:00:00Z",
@@ -270,11 +273,12 @@ function installFakeBackend() {
       return Promise.resolve({ items, next_cursor: null });
     }
     if (path === "/transactions" && method === "POST") {
-      const body = opts?.json as Omit<TransactionOut, "id" | "is_demo" | "deleted_at" | "created_at" | "updated_at">;
+      const body = opts?.json as Omit<TransactionOut, "id" | "is_demo" | "is_imported" | "deleted_at" | "created_at" | "updated_at">;
       const created: TransactionOut = {
         ...body,
         id: `t${nextId++}`,
         is_demo: false,
+        is_imported: false,
         deleted_at: null,
         created_at: "2026-09-11T00:00:00Z",
         updated_at: "2026-09-11T00:00:00Z",
@@ -406,6 +410,23 @@ describe("TransactionsScreen", () => {
 
     const row = (await screen.findByText("Groceries")).closest("li")!;
     expect(within(row).getByText("Uncategorized")).toBeInTheDocument();
+  });
+
+  it("shows an 'Imported via Open Finance' marker on an imported transaction", async () => {
+    seed([CHECKING], [{ ...GROCERIES, is_imported: true }]);
+    renderScreen();
+
+    const row = (await screen.findByText("Groceries")).closest("li")!;
+    const marker = within(row).getByTitle("Imported via Open Finance");
+    expect(marker).toBeInTheDocument();
+  });
+
+  it("does not show an 'Imported via Open Finance' marker on a non-imported transaction", async () => {
+    seed([CHECKING], [GROCERIES]);
+    renderScreen();
+
+    const row = (await screen.findByText("Groceries")).closest("li")!;
+    expect(within(row).queryByTitle("Imported via Open Finance")).not.toBeInTheDocument();
   });
 
   it("re-fetches scoped to the selected account when the filter changes", async () => {
