@@ -76,6 +76,21 @@ def shift_month(ref: date, delta: int) -> date:
     return date(year, month + 1, 1)
 
 
+def next_due_on_or_after(anchor: date, ref: date) -> date:
+    """The next date on `anchor`'s day-of-month that is `>= ref`. Months
+    without that day clamp to the month's last day (`calendar.monthrange`,
+    via `month_end`), matching the clamping `advance` already uses. Pure and
+    clock-free — rolls a bank's reported `bill_due_date` (Pluggy always
+    reports the last CLOSED bill's due date, a past date) forward to its
+    next occurrence. Only `anchor`'s day-of-month matters; its own
+    month/year are otherwise ignored."""
+    candidate = ref.replace(day=min(anchor.day, month_end(ref).day))
+    if candidate >= ref:
+        return candidate
+    next_month = shift_month(ref, 1)
+    return next_month.replace(day=min(anchor.day, month_end(next_month).day))
+
+
 def month_starts(from_date: date, to_date: date) -> list[date]:
     """The first-of-month dates spanning `from_date`'s month through
     `to_date`'s month, inclusive, oldest first — the continuous month axis a
