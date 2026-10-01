@@ -38,9 +38,8 @@ export interface SafeToSpend {
   days_remaining: number;
   daily_allowance_minor: number;
   /** End-of-month projected totals (income/expense), independent of the
-   * optional monthly budget — not yet surfaced in `SafeToSpendCard`'s UI,
-   * carried here so a future task can render them without another round
-   * trip through this interface. */
+   * optional monthly budget — surfaced on `MonthResultCard`, not
+   * `SafeToSpendCard` itself. */
   projected_income_minor: number;
   projected_expense_minor: number;
 }

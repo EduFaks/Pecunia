@@ -4,11 +4,11 @@
  * Refresh stays happy, same move `creditCardUsage.ts`/`budgetProgress.ts`/
  * `goalProgress.ts` already make for their own card's pure math.
  *
- * Unlike the old single spend-progress bar (`safeToSpendPercent`, still
- * exported from `SafeToSpendCard.tsx` for the hero's simpler fill), this bar
- * reads as the whole month: spent, committed-to-come, and what's still free,
- * each a percentage of `expected_income_minor` — the month's total, not a
- * shrinking "safe to spend" ceiling.
+ * Unlike the old single spend-progress bar (`safeToSpendPercent`, since
+ * deleted along with the simpler fill it drove), this bar reads as the whole
+ * month: spent, committed-to-come, and what's still free, each a percentage
+ * of `expected_income_minor` — the month's total, not a shrinking "safe to
+ * spend" ceiling.
  */
 
 export interface SafeToSpendSegmentsInput {

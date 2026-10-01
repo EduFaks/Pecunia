@@ -35,7 +35,7 @@ export function currentMonthRange(now: Date): AnalyticsRange {
  * `NaN`/`Infinity`) when last month had no spend to compare against, so a
  * brand-new workspace (or a currency's first month of activity) can't divide
  * by zero. Kept pure and exported so the guard is unit-testable without
- * rendering the card — same rationale as `SafeToSpendCard.safeToSpendPercent`.
+ * rendering the card — same rationale as `safeToSpendBar.safeToSpendSegments`.
  */
 // eslint-disable-next-line react-refresh/only-export-components
 export function cashflowDeltaPct(currentMinor: number, previousMinor: number): number | null {

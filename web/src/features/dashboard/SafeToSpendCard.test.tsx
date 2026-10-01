@@ -175,7 +175,14 @@ describe("SafeToSpendCard", () => {
     // asserted by data attribute too, so a copy change to either label can't
     // silently make this test match the wrong element.
     expect(await screen.findByLabelText(/marcador de orçamento/i)).toBeInTheDocument();
-    expect(document.querySelector("[data-safe-to-spend-budget-marker]")).toBeInTheDocument();
+    const marker = document.querySelector("[data-safe-to-spend-budget-marker]");
+    expect(marker).toBeInTheDocument();
+    // Must contrast against BOTH the near-white `bg-ink` spent segment and
+    // the dark `bg-surface-2` free track — `bg-ink` (same tone as the spent
+    // segment) would vanish right when spend crosses the budget line, the
+    // moment the marker matters most.
+    expect(marker).toHaveClass("bg-negative");
+    expect(marker).not.toHaveClass("bg-ink");
   });
 
   it("omits the budget marker when no monthly budget is set", async () => {

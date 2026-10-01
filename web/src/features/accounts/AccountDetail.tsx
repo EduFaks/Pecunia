@@ -126,9 +126,9 @@ function AccountDetail() {
                 Bill close: <DateText iso={accountLink.bill_close_date} />
               </p>
             ) : null}
-            {accountLink.bill_due_date ? (
+            {accountLink.next_bill_due_date ? (
               <p>
-                Due date: <DateText iso={accountLink.bill_due_date} />
+                Due date: <DateText iso={accountLink.next_bill_due_date} />
               </p>
             ) : null}
           </div>

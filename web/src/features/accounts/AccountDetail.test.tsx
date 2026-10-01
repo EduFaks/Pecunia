@@ -190,7 +190,55 @@ describe("AccountDetail", () => {
     expect(within(row).queryByText("Uncategorized")).not.toBeInTheDocument();
   });
 
-  it("shows a linked credit card's credit limit, bill close date, and due date", async () => {
+  it("shows a linked credit card's credit limit, bill close date, and the ROLLED due date (not the raw past one)", async () => {
+    const creditCard: AccountOut = { ...ACCOUNT, id: "a1", type: "credit_card" };
+    installFakeBackend({
+      account: creditCard,
+      bankConnections: [
+        {
+          id: "conn1",
+          institution_name: "Test Bank",
+          status: "ok",
+          last_error: null,
+          last_synced_at: "2026-09-11T00:00:00Z",
+          links: [
+            {
+              id: "link1",
+              account_id: "a1",
+              account_name: "Credit Card",
+              account_currency: "USD",
+              pluggy_account_id: "plug123",
+              sync_from: "2026-09-10",
+              provider_balance_minor: -50000,
+              provider_balance_as_of: "2026-09-11T00:00:00Z",
+              derived_balance_minor: -50000,
+              credit_limit_minor: 500000,
+              bill_close_date: "2026-09-25",
+              // Raw bill_due_date is stale/past; next_bill_due_date is the
+              // rolled (future) replacement the component must render instead
+              // — same past-date bug U2 fixed on the dashboard's
+              // AccountsCardsCard "vence" line.
+              bill_due_date: "2020-01-05",
+              next_bill_due_date: "2026-10-15",
+            },
+          ],
+        },
+      ],
+    });
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Everyday checking" });
+    expect(screen.getByText(/5,000\.00/)).toBeInTheDocument(); // credit limit
+    expect(screen.getByText("Credit limit:")).toBeInTheDocument();
+    expect(screen.getByText("Bill close:")).toBeInTheDocument();
+    expect(screen.getByText("Due date:")).toBeInTheDocument();
+    // DateText renders in numeric format by default (MM/DD/YYYY)
+    expect(screen.getByText(/09\/25\/2026/)).toBeInTheDocument();
+    expect(screen.getByText(/10\/15\/2026/)).toBeInTheDocument(); // rolled next_bill_due_date
+    expect(screen.queryByText(/01\/05\/2020/)).not.toBeInTheDocument(); // raw past bill_due_date must NOT show
+  });
+
+  it("shows no due-date line when next_bill_due_date is null, even with a raw bill_due_date", async () => {
     const creditCard: AccountOut = { ...ACCOUNT, id: "a1", type: "credit_card" };
     installFakeBackend({
       account: creditCard,
@@ -215,7 +263,7 @@ describe("AccountDetail", () => {
               credit_limit_minor: 500000,
               bill_close_date: "2026-09-25",
               bill_due_date: "2026-10-15",
-              next_bill_due_date: "2026-10-15",
+              next_bill_due_date: null,
             },
           ],
         },
@@ -224,12 +272,8 @@ describe("AccountDetail", () => {
     renderDetail();
 
     await screen.findByRole("heading", { name: "Everyday checking" });
-    expect(screen.getByText(/5,000\.00/)).toBeInTheDocument(); // credit limit
     expect(screen.getByText("Credit limit:")).toBeInTheDocument();
     expect(screen.getByText("Bill close:")).toBeInTheDocument();
-    expect(screen.getByText("Due date:")).toBeInTheDocument();
-    // DateText renders in numeric format by default (MM/DD/YYYY)
-    expect(screen.getByText(/09\/25\/2026/)).toBeInTheDocument();
-    expect(screen.getByText(/10\/15\/2026/)).toBeInTheDocument();
+    expect(screen.queryByText("Due date:")).not.toBeInTheDocument();
   });
 });

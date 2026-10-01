@@ -253,10 +253,14 @@ the accent — the accent is reserved for interactive emphasis and focus, not st
 not status): the onboarding wizard's step-progress indicator, the owner step's
 password-strength meter (`PasswordStrength`), a project's funding-progress bar
 (`FundingBar`), a budget's spend-progress bar (`BudgetVsActualBar`), a loan's payoff-progress bar (`LoanPayoffBar`), a savings goal's progress ring
-(`GoalRing`), the dashboard's safe-to-spend card's spend-progress bar (`SafeToSpendCard`,
-spend against the safe-to-spend ceiling), and the dashboard's accounts-and-cards card's
-credit-usage bar (`AccountsCardsCard`, a linked credit card's outstanding balance against
-its limit) — all eight express
+(`GoalRing`), the dashboard's safe-to-spend card's segmented month-total bar
+(`SafeToSpendCard`: a 3-segment bar — solid `bg-ink` for spent-to-date, a hatched
+`--pc-accent-soft` texture for committed-to-come, and neutral `bg-surface-2` for what's
+still free, each sized as a percent of the month's expected income, plus a budget-marker
+line — where the hatched `--pc-accent-soft` committed segment is the sanctioned accent use;
+the spent segment itself is neutral `bg-ink`, not accent), and the dashboard's
+accounts-and-cards card's credit-usage bar (`AccountsCardsCard`, a linked credit card's
+outstanding balance against its limit) — all eight express
 "progress toward/against a bound," the place a static accent fill is sanctioned (none of
 the eight render text on top of the fill, so none need the `text-on-accent` treatment). A static ratio is never emerald/coral (that
 would falsely imply gain/loss) — **except** `BudgetVsActualBar` and `AccountsCardsCard`'s

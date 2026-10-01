@@ -157,7 +157,15 @@ function SafeToSpendBody({ entry, currency }: SafeToSpendBodyProps) {
           <div
             data-safe-to-spend-budget-marker
             aria-label="Marcador de orçamento"
-            className="absolute inset-y-0 w-0.5 bg-ink"
+            // `bg-negative` (not `bg-ink`, same as the spent segment): the
+            // marker has to stay visible when spend has pushed past the
+            // budget line — exactly the moment it matters most — so it needs
+            // a token that reads against both the near-white `bg-ink` spent
+            // fill and the dark `bg-surface-2` free track. The near-white
+            // `bg-accent`/`bg-ink` pair is too close in lightness to do that
+            // (see docs/CONVENTIONS.md §9.1); `--pc-negative` is the one
+            // token with enough contrast against both ends.
+            className="absolute inset-y-0 w-0.5 bg-negative"
             style={{ left: `${segments.budgetMarkerPct}%` }}
           />
         ) : null}
