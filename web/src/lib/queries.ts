@@ -213,6 +213,18 @@ export const qk = {
      * `from`/`to` window to key on), so a single bare slot under the shared
      * `["analytics"]` prefix. */
     summary: () => ["analytics", "summary"] as const,
+    /** The dashboard's safe-to-spend hero metric (`/analytics/safe-to-spend`,
+     * Track U v1.6) — this month's spendable room per currency. No reporting
+     * window (always reads "now"), so a single bare slot under the shared
+     * `["analytics"]` prefix, same shape as `summary`/`upcoming`. The
+     * optional-monthly-budget mutation that caps this figure
+     * (`PUT /settings/monthly-budget`, `useSetMonthlyBudget` in
+     * `features/dashboard/useDashboard.ts`) has no query key of its own — a
+     * mutation isn't cached — it simply invalidates the bare `["analytics"]`
+     * prefix (refetching this slot) plus `qk.me` (so a mounted
+     * `usePreferences()` consumer, which echoes `instance_state.settings`
+     * verbatim, picks up the new value too). */
+    safeToSpend: () => ["analytics", "safe-to-spend"] as const,
   },
 
   auditEvents: (filters: AuditEventFilters = {}) => ["audit-events", filters] as const,

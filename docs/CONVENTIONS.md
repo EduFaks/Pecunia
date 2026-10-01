@@ -249,19 +249,24 @@ value movement and semantic status, never decoration. A `:root[data-theme="light
 exists but is intentionally empty — do not rely on a light theme in V1. Eyebrows, index
 labels, and required-field markers (`*`) use ink (`text-ink-2`/`text-ink-faint`), never
 the accent — the accent is reserved for interactive emphasis and focus, not static labels.
-**Six named exceptions carry the accent as a progress/emphasis fill** (not decoration,
+**Eight named exceptions carry the accent as a progress/emphasis fill** (not decoration,
 not status): the onboarding wizard's step-progress indicator, the owner step's
 password-strength meter (`PasswordStrength`), a project's funding-progress bar
-(`FundingBar`), a budget's spend-progress bar (`BudgetVsActualBar`), a loan's payoff-progress bar (`LoanPayoffBar`), and a savings goal's progress ring
-(`GoalRing`) — all six express
+(`FundingBar`), a budget's spend-progress bar (`BudgetVsActualBar`), a loan's payoff-progress bar (`LoanPayoffBar`), a savings goal's progress ring
+(`GoalRing`), the dashboard's safe-to-spend card's spend-progress bar (`SafeToSpendCard`,
+spend against the safe-to-spend ceiling), and the dashboard's accounts-and-cards card's
+credit-usage bar (`AccountsCardsCard`, a linked credit card's outstanding balance against
+its limit) — all eight express
 "progress toward/against a bound," the place a static accent fill is sanctioned (none of
-the six render text on top of the fill, so none need the `text-on-accent` treatment). A static ratio is never emerald/coral (that
-would falsely imply gain/loss) — **except** `BudgetVsActualBar`, which is the one progress
-fill allowed to switch from the accent to coral (`--pc-negative`): going over a budget
-isn't just "more progress" the way exceeding a funding target is (which stays the accent,
-with a separate `Pill tone="positive"` marking the goal reached) — it's a real overspend,
-the same semantic bad state coral marks everywhere else. Reach for another progress fill,
-or another accent→coral switch, only with a new named exception here.
+the eight render text on top of the fill, so none need the `text-on-accent` treatment). A static ratio is never emerald/coral (that
+would falsely imply gain/loss) — **except** `BudgetVsActualBar` and `AccountsCardsCard`'s
+credit-usage bar, the two progress fills allowed to switch from the accent to coral
+(`--pc-negative`): going over a budget, or over a card's credit limit, isn't just "more
+progress" the way exceeding a funding target is (which stays the accent, with a separate
+`Pill tone="positive"` marking the goal reached) — it's a real overspend, the same
+semantic bad state coral marks everywhere else (`usage.overLimit ? "bg-negative" :
+"bg-accent"`, mirroring `BudgetVsActualBar`'s overspend rationale). Reach for another
+progress fill, or another accent→coral switch, only with a new named exception here.
 
 **Data-viz is the one sanctioned home for vibrant color.** Charts are built with
 shadcn/Recharts via the `components/ui/chart` primitive (`ChartContainer`/`ChartConfig` +

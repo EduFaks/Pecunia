@@ -11,6 +11,7 @@ from pecunia.db import get_db
 from pecunia.period import shift_month
 from pecunia.services.analytics import AnalyticsService
 from pecunia.services.forecast import ForecastService
+from pecunia.services.safe_to_spend import SafeToSpendService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depends(require_initialized)])
 
@@ -163,6 +164,18 @@ class SummaryOut(BaseModel):
     net_worth_change: NetWorthChangeOut
 
 
+class SafeToSpendOut(BaseModel):
+    safe_minor: int
+    displayed_safe_minor: int
+    limited_by: Literal["income", "budget"]
+    expected_income_minor: int
+    committed_remaining_minor: int
+    spent_mtd_minor: int
+    monthly_budget_minor: int | None
+    days_remaining: int
+    daily_allowance_minor: int
+
+
 @router.get("/cashflow")
 async def cashflow(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -270,3 +283,12 @@ async def summary(
 ) -> dict[str, SummaryOut]:
     # A pure read; the wall clock lives here so the service stays clock-free (§4).
     return await AnalyticsService(db).summary(wsctx.workspace_id, today=_today())
+
+
+@router.get("/safe-to-spend")
+async def safe_to_spend(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+) -> dict[str, SafeToSpendOut]:
+    # A pure read; the wall clock lives here so the service stays clock-free (§4).
+    return await SafeToSpendService(db).compute(wsctx.workspace_id, today=_today())

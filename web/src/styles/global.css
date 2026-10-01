@@ -56,6 +56,8 @@
   --radius-pc-lg: var(--pc-radius-lg);
   --shadow-pc-1: var(--pc-shadow-1);
   --shadow-pc-2: var(--pc-shadow-2);
+  /* `shadow-pc-glow` — the hero-only elevation step, see `tokens.css`. */
+  --shadow-pc-glow: var(--pc-shadow-glow);
   --ease-pc: var(--pc-ease);
   --ease-pc-out: var(--pc-ease-out);
 }

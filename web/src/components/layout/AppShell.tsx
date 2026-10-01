@@ -26,6 +26,7 @@ import { focusRingClass } from "../ui/a11y";
 import Button from "../ui/Button";
 import Wordmark from "../brand/Wordmark";
 import DemoChip from "./DemoChip";
+import TabBar from "./TabBar";
 
 interface NavItem {
   label: string;
@@ -147,6 +148,7 @@ function AppShell() {
         </div>
         <nav
           id={navId}
+          aria-label="Sidebar"
           className="flex flex-1 flex-col gap-5 px-3 py-4"
           onClick={() => setNavOpen(false)}
         >
@@ -228,7 +230,11 @@ function AppShell() {
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
+        {/* `pb-24` (not the desktop `pb-8`) below `md` — clears `TabBar`'s
+            fixed footprint (its own height plus whatever
+            `env(safe-area-inset-bottom)` adds on an iPhone) so the last card
+            on a phone never sits half-hidden behind it. */}
+        <main className="min-w-0 flex-1 px-4 pt-6 pb-24 md:px-8 md:py-8">
           {/* One restrained entrance for the whole app: keying this wrapper on
               the pathname remounts it each navigation, replaying the quiet
               `.pc-reveal` fade (reduced-motion-safe, pure CSS) once per screen —
@@ -238,6 +244,8 @@ function AppShell() {
           </div>
         </main>
       </div>
+
+      <TabBar />
     </div>
   );
 }

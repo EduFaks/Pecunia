@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import AppShell from "./AppShell";
 import { useAuth } from "../../lib/auth";
@@ -53,6 +53,18 @@ function renderShell(initialPath: string) {
   );
 }
 
+/** Scopes a query to the sidebar's own `<nav>` landmark — now that `AppShell`
+ * also mounts `TabBar` (its own, separately-labeled `<nav aria-label="Tab
+ * bar">`), a bare `screen.getByRole("link", { name: "Dashboard" })` would
+ * find two matches wherever a tab shares its label with a sidebar item
+ * (Dashboard/Insights/Settings — `TabBar` uses the dashboard cards'
+ * Portuguese copy for Transactions/Accounts, so those two never collide).
+ * Scoping to the sidebar landmark keeps every assertion below exactly as
+ * strict as it was before `TabBar` existed. */
+function sidebarNav() {
+  return within(screen.getByRole("navigation", { name: "Sidebar" }));
+}
+
 describe("AppShell", () => {
   beforeEach(() => {
     mockUseAuth.mockReturnValue(authState());
@@ -60,28 +72,29 @@ describe("AppShell", () => {
 
   it("renders every nav item as a link to its real route", () => {
     renderShell("/");
+    const nav = sidebarNav();
 
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/");
-    expect(screen.getByRole("link", { name: "Insights" })).toHaveAttribute("href", "/insights");
-    expect(screen.getByRole("link", { name: "Accounts" })).toHaveAttribute("href", "/accounts");
-    expect(screen.getByRole("link", { name: "Transactions" })).toHaveAttribute(
+    expect(nav.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/");
+    expect(nav.getByRole("link", { name: "Insights" })).toHaveAttribute("href", "/insights");
+    expect(nav.getByRole("link", { name: "Accounts" })).toHaveAttribute("href", "/accounts");
+    expect(nav.getByRole("link", { name: "Transactions" })).toHaveAttribute(
       "href",
       "/transactions",
     );
-    expect(screen.getByRole("link", { name: "Goals" })).toHaveAttribute("href", "/goals");
-    expect(screen.getByRole("link", { name: "Contacts" })).toHaveAttribute("href", "/contacts");
-    expect(screen.getByRole("link", { name: "Planned" })).toHaveAttribute("href", "/planned");
-    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/projects");
-    expect(screen.getByRole("link", { name: "Assets" })).toHaveAttribute("href", "/assets");
-    expect(screen.getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "/portfolio");
-    expect(screen.getByRole("link", { name: "Loans" })).toHaveAttribute("href", "/loans");
-    expect(screen.getByRole("link", { name: "Subscriptions" })).toHaveAttribute(
+    expect(nav.getByRole("link", { name: "Goals" })).toHaveAttribute("href", "/goals");
+    expect(nav.getByRole("link", { name: "Contacts" })).toHaveAttribute("href", "/contacts");
+    expect(nav.getByRole("link", { name: "Planned" })).toHaveAttribute("href", "/planned");
+    expect(nav.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/projects");
+    expect(nav.getByRole("link", { name: "Assets" })).toHaveAttribute("href", "/assets");
+    expect(nav.getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "/portfolio");
+    expect(nav.getByRole("link", { name: "Loans" })).toHaveAttribute("href", "/loans");
+    expect(nav.getByRole("link", { name: "Subscriptions" })).toHaveAttribute(
       "href",
       "/subscriptions",
     );
-    expect(screen.getByRole("link", { name: "Budgets" })).toHaveAttribute("href", "/budgets");
-    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity");
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+    expect(nav.getByRole("link", { name: "Budgets" })).toHaveAttribute("href", "/budgets");
+    expect(nav.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity");
+    expect(nav.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
 
   it("renders the section headers grouping the nav, as labels rather than links", () => {
@@ -99,12 +112,13 @@ describe("AppShell", () => {
 
   it("renders a lucide icon alongside each nav item's label", () => {
     renderShell("/");
+    const nav = sidebarNav();
 
     // The icon is decorative (aria-hidden), so the link's accessible name
     // stays the plain label; the glyph is an svg inside the link.
-    const dashboard = screen.getByRole("link", { name: "Dashboard" });
+    const dashboard = nav.getByRole("link", { name: "Dashboard" });
     expect(dashboard.querySelector("svg")).toBeInTheDocument();
-    const accounts = screen.getByRole("link", { name: "Accounts" });
+    const accounts = nav.getByRole("link", { name: "Accounts" });
     expect(accounts.querySelector("svg")).toBeInTheDocument();
   });
 
@@ -125,23 +139,47 @@ describe("AppShell", () => {
 
   it("marks the active nav item for the current route, and only that one", () => {
     renderShell("/accounts");
+    const nav = sidebarNav();
 
-    expect(screen.getByRole("link", { name: "Accounts" })).toHaveClass("bg-accent-soft");
-    expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveClass("bg-accent-soft");
-    expect(screen.getByRole("link", { name: "Transactions" })).not.toHaveClass("bg-accent-soft");
+    expect(nav.getByRole("link", { name: "Accounts" })).toHaveClass("bg-accent-soft");
+    expect(nav.getByRole("link", { name: "Dashboard" })).not.toHaveClass("bg-accent-soft");
+    expect(nav.getByRole("link", { name: "Transactions" })).not.toHaveClass("bg-accent-soft");
   });
 
   it("marks Dashboard active only at the exact root path, not every nested route", () => {
     renderShell("/settings");
+    const nav = sidebarNav();
 
-    expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveClass("bg-accent-soft");
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveClass("bg-accent-soft");
+    expect(nav.getByRole("link", { name: "Dashboard" })).not.toHaveClass("bg-accent-soft");
+    expect(nav.getByRole("link", { name: "Settings" })).toHaveClass("bg-accent-soft");
   });
 
   it("mounts the demo chip in the topbar", () => {
     renderShell("/");
 
     expect(screen.getByText("demo-chip-stub")).toBeInTheDocument();
+  });
+
+  // Task 7: the mobile bottom TabBar. It's `md:hidden` (jsdom doesn't
+  // evaluate that at a given viewport, same caveat as the drawer tests
+  // below) — desktop's only nav stays the sidebar, unchanged by its
+  // presence in the DOM.
+  describe("mobile tab bar", () => {
+    it("renders alongside the sidebar, hidden at the md breakpoint and up", () => {
+      renderShell("/");
+
+      const tabBar = screen.getByRole("navigation", { name: /tab bar/i });
+      expect(tabBar).toHaveClass("md:hidden");
+      // The sidebar itself never gained `md:hidden` — it's still the
+      // always-visible desktop nav, exactly as before Task 7.
+      expect(screen.getByRole("navigation", { name: "Sidebar" })).not.toHaveClass("md:hidden");
+    });
+
+    it("gives the main content bottom clearance so it isn't hidden behind the bar", () => {
+      renderShell("/");
+
+      expect(screen.getByRole("main").className).toMatch(/pb-24/);
+    });
   });
 
   // Below ~768px the fixed sidebar collapses into an off-canvas drawer
@@ -155,7 +193,7 @@ describe("AppShell", () => {
       renderShell("/");
 
       const toggle = screen.getByRole("button", { name: /navigation/i });
-      const nav = screen.getByRole("navigation");
+      const nav = screen.getByRole("navigation", { name: "Sidebar" });
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       expect(toggle).toHaveAttribute("aria-controls", nav.id);
       expect(nav.id).toBeTruthy();
@@ -200,15 +238,19 @@ describe("AppShell", () => {
       fireEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
 
-      fireEvent.click(screen.getByRole("link", { name: "Accounts" }));
+      fireEvent.click(sidebarNav().getByRole("link", { name: "Accounts" }));
 
       expect(toggle).toHaveAttribute("aria-expanded", "false");
     });
 
-    it("does not still render every nav item twice (single shared nav landmark)", () => {
+    it("does not still render every sidebar nav item twice (single shared sidebar landmark)", () => {
       renderShell("/");
 
-      expect(screen.getAllByRole("link", { name: "Dashboard" })).toHaveLength(1);
+      // `TabBar` (Task 7) renders its own "Dashboard" tab below `md` — a
+      // second, separately-labeled nav landmark, not a duplicate of the
+      // sidebar's — so this scopes to the sidebar specifically, same
+      // guarantee the drawer-vs-static-copy test originally existed for.
+      expect(sidebarNav().getAllByRole("link", { name: "Dashboard" })).toHaveLength(1);
     });
   });
 });

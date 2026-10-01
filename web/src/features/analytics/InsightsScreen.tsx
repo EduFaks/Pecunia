@@ -1,14 +1,33 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, Cell, XAxis, YAxis } from "recharts";
-import { describeBreakdownBars } from "../../components/charts/chartMath";
-import type { BreakdownItem } from "../../components/charts/chartMath";
+import { describeBreakdownBars, describeTrend } from "../../components/charts/chartMath";
+import type { BreakdownItem, CashflowBar, ChartPoint } from "../../components/charts/chartMath";
+import { apiFetch } from "../../lib/api";
 import { formatMoney } from "../../lib/money";
 import { usePreferences } from "../../lib/preferences";
+import { qk } from "../../lib/queries";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "../../components/ui/chart";
 import type { ChartConfig } from "../../components/ui/chart";
+import type { ActivityEntry } from "../../lib/activity";
+import AccountsSnapshot from "../dashboard/AccountsSnapshot";
+import { buildBalanceSeries } from "../dashboard/balanceSeries";
+import type { TransactionLite } from "../dashboard/balanceSeries";
+import { selectPrimaryAccount } from "../dashboard/balances";
+import type { AccountSummary, AssetSummary } from "../dashboard/balances";
+import BalanceTiles from "../dashboard/BalanceTiles";
+import CommittedMonthlyCard from "../dashboard/CommittedMonthlyCard";
+import GoalsWidget from "../dashboard/GoalsWidget";
+import NetWorthChangeCard from "../dashboard/NetWorthChangeCard";
+import RecentActivity from "../dashboard/RecentActivity";
+import SavingsRateCard from "../dashboard/SavingsRateCard";
+import UpcomingWidget from "../dashboard/UpcomingWidget";
+import { useLoans } from "../loans/useLoans";
+import { usePortfolios } from "../portfolio/usePortfolios";
 import { useProjectList } from "../projects/useProjects";
 import type { ProjectOut } from "../projects/useProjects";
+import { CashflowChart } from "./CashflowChart";
 import { CategoryChart } from "./CategoryChart";
 import type { DonutDatum, ForecastChartPoint } from "../../components/charts/chartMath";
 import { ForecastArea } from "./ForecastArea";
@@ -18,11 +37,36 @@ import { DEFAULT_PERIOD_SELECTION, computePeriodRange } from "./period";
 import type { PeriodSelection } from "./period";
 import { PeriodSelector } from "./PeriodSelector";
 import {
+  useCashflow,
   useForecast,
   useNetWorthComposition,
+  useNetWorthSeries,
   useSpendingByCategory,
   useSpendingByContact,
 } from "./useAnalytics";
+
+interface KeysetResponse<T> {
+  items: T[];
+}
+
+/** A net-worth series needs at least two points to draw a trend. */
+const MIN_TREND_POINTS = 2;
+
+/**
+ * Insights reads a bounded snapshot of each listing — a summary view, not a
+ * full paginated walk (that's each resource's own screen, built on
+ * `DataList`). These limits comfortably cover a typical workspace;
+ * `pecunia.pagination.MAX_LIMIT` is 200 server-side. Kept alongside the
+ * relocated `BalanceTiles`/`AccountsSnapshot`/`RecentActivity` widgets below
+ * (Task 6, Track U) — the same bounded reads the pre-Track-U Dashboard made.
+ */
+const ACCOUNTS_FETCH_LIMIT = 200;
+const ASSETS_FETCH_LIMIT = 200;
+const ACTIVITY_FETCH_LIMIT = 8;
+/** How many of the primary account's most recent transactions to walk
+ * backward through when reconstructing its balance series
+ * (`balanceSeries.ts`) — a recent-trend window, not full history. */
+const TRANSACTIONS_FETCH_LIMIT = 60;
 
 /** One row of a ranked breakdown. `note` is an optional muted secondary
  * caption (e.g. a project's "of $500.00 planned"). */
@@ -161,16 +205,31 @@ function projectNote(project: ProjectOut, currency: string, locale?: string): st
 
 /**
  * The Insights screen (`/insights`) — the deeper analytical view that
- * complements, without duplicating, the dashboard's three headline graphs.
- * A shared period selector (last 3 / 6 / 12 / 24 months, or All time) at the
- * top drives every range-aware query on the screen: a bounded month count
- * computes the `{ from, to }` window, while All time drops the client range
- * and has the hooks send `?all=true` (the server reads from the workspace's
- * earliest activity). Either way the mode rides in each query key, so
- * switching refetches (see `useAnalytics`).
+ * complements, without duplicating, the lean daily `Dashboard` (Track U,
+ * v1.6: `SafeToSpendCard`/`MonthResultCard`/`SpendingBreakdownCard`/
+ * `UpcomingCard`/`AccountsCardsCard`). A shared period selector (last 3 / 6 /
+ * 12 / 24 months, or All time) at the top drives every range-aware query on
+ * the screen: a bounded month count computes the `{ from, to }` window, while
+ * All time drops the client range and has the hooks send `?all=true` (the
+ * server reads from the workspace's earliest activity). Either way the mode
+ * rides in each query key, so switching refetches (see `useAnalytics`).
  *
  * Cards, all base-currency (never summed across currencies, §4), all
- * tokens-only with calm empty/loading/error states matching the dashboard:
+ * tokens-only with calm empty/loading/error states:
+ *   - `BalanceTiles` — the net-worth hero + per-currency breakdown (Task 6:
+ *     relocated from the pre-Track-U Dashboard, which no longer has a "right
+ *     now" net-worth figure of its own).
+ *   - The savings/committed/net-worth-change KPI trio (`SavingsRateCard`,
+ *     `CommittedMonthlyCard`, `NetWorthChangeCard` — Task 6: relocated).
+ *   - Net worth over time — `ForecastArea` over `/analytics/net-worth`'s last
+ *     12 months, with a dashed projected tail from the same `forecastQuery`
+ *     the Cash forecast card below already fetches (Task 6: relocated; no
+ *     extra request for the tail).
+ *   - Net worth composition — the existing stacked-area breakdown.
+ *   - Income vs spend — `CashflowChart` over `/analytics/cashflow`'s last 12
+ *     months (Task 6: relocated, extracted out of the old `Dashboard.tsx`
+ *     into its own `CashflowChart.tsx` so this screen and any future caller
+ *     share one implementation).
  *   - Spending by contact — a ranked horizontal breakdown (`BreakdownChart`).
  *   - Spending by category — the dashboard's shared `CategoryChart` donut over
  *     the window.
@@ -184,6 +243,16 @@ function projectNote(project: ProjectOut, currency: string, locale?: string): st
  *     flagging a projected negative balance). Forward-looking, so unlike the
  *     other cards it ignores the period selector entirely — there's no
  *     historical cash-balance series to bound.
+ *   - `AccountsSnapshot` + `UpcomingWidget` (Task 6: relocated) — a glanceable
+ *     accounts list (with the primary account's sparkline) and the 30-day
+ *     due/over-budget panel; both are richer, deeper-horizon siblings of the
+ *     dashboard's own `AccountsCardsCard`/`UpcomingCard`, the same intentional
+ *     duplication-by-depth this screen already applies to the category chart.
+ *   - `GoalsWidget` + `RecentActivity` (Task 6: relocated).
+ *
+ * None of the relocated widgets above are range-aware — like Cash forecast,
+ * they ignore the period selector and read their own server-bounded windows
+ * (the same unranged `useAnalytics` calls the old Dashboard made).
  */
 function InsightsScreen() {
   const preferences = usePreferences();
@@ -208,6 +277,79 @@ function InsightsScreen() {
   // Forward-looking, so it ignores the period selector entirely (see the
   // component docstring).
   const forecastQuery = useForecast();
+  // Server-bounded to the last 12 months, independent of the period selector
+  // above — same unranged reads the old Dashboard made (Task 6: relocated).
+  const netWorthQuery = useNetWorthSeries();
+  const cashflowQuery = useCashflow();
+
+  // The relocated `BalanceTiles`/`AccountsSnapshot`/`RecentActivity` widgets'
+  // own bounded reads — see the `"dashboard"`-suffixed key rationale on
+  // `Dashboard.tsx`'s own `accountsQuery` (same collision this screen must
+  // dodge against `AccountsScreen`'s `useInfiniteQuery`).
+  const accountsQuery = useQuery({
+    queryKey: [...qk.accounts, "dashboard"],
+    queryFn: () =>
+      apiFetch<KeysetResponse<AccountSummary>>(`/accounts?limit=${ACCOUNTS_FETCH_LIMIT}`),
+  });
+  const assetsQuery = useQuery({
+    queryKey: [...qk.assets, "dashboard"],
+    queryFn: () => apiFetch<KeysetResponse<AssetSummary>>(`/assets?limit=${ASSETS_FETCH_LIMIT}`),
+  });
+  const portfoliosQuery = usePortfolios();
+  const loansQuery = useLoans();
+  const activityQuery = useQuery({
+    queryKey: [...qk.activity, "dashboard"],
+    queryFn: () =>
+      apiFetch<KeysetResponse<ActivityEntry>>(`/activity?limit=${ACTIVITY_FETCH_LIMIT}`),
+  });
+
+  const accounts = accountsQuery.data?.items ?? [];
+  const activeAccounts = accounts.filter((account) => account.archived_at === null);
+  const primary = selectPrimaryAccount(activeAccounts, baseCurrency);
+
+  const transactionsQuery = useQuery({
+    queryKey: [...qk.transactions(primary?.id), "dashboard"],
+    queryFn: () => {
+      if (!primary) {
+        // Never actually invoked while disabled — typed defensively rather
+        // than asserting non-null.
+        return Promise.resolve<KeysetResponse<TransactionLite>>({ items: [] });
+      }
+      return apiFetch<KeysetResponse<TransactionLite>>(
+        `/transactions?account_id=${primary.id}&limit=${TRANSACTIONS_FETCH_LIMIT}`,
+      );
+    },
+    enabled: primary !== null,
+  });
+
+  const assets = assetsQuery.data?.items ?? [];
+  const portfolios = portfoliosQuery.data?.items ?? [];
+  const loans = loansQuery.data?.items ?? [];
+  const activity = activityQuery.data?.items ?? [];
+  const primarySeries =
+    primary && transactionsQuery.data
+      ? buildBalanceSeries(primary.balance_minor, transactionsQuery.data.items)
+      : [];
+
+  const netWorthPoints: ChartPoint[] = (netWorthQuery.data ?? []).map((point) => ({
+    date: point.date,
+    valueMinor: point.net_worth_minor,
+  }));
+  // Reuses the same `forecastQuery` the Cash forecast card below already
+  // fetches — its `.net_worth` field is the net-worth chart's dashed tail.
+  const netWorthProjected: ForecastChartPoint[] = (forecastQuery.data?.net_worth ?? []).map(
+    (point) => ({
+      date: point.date,
+      valueMinor: point.value_minor,
+      lowerMinor: point.lower_minor,
+      upperMinor: point.upper_minor,
+    }),
+  );
+  const cashflowBars: CashflowBar[] = (cashflowQuery.data ?? []).map((point) => ({
+    periodStart: point.period_start,
+    incomeMinor: point.income_minor,
+    spendMinor: point.spend_minor,
+  }));
 
   const contactRows: BreakdownRow[] = (contactQuery.data ?? []).map((row) => ({
     key: row.contact_id ?? "no-contact",
@@ -253,6 +395,43 @@ function InsightsScreen() {
         <PeriodSelector value={selection} onChange={setSelection} />
       </div>
 
+      <BalanceTiles
+        accounts={activeAccounts}
+        assets={assets}
+        portfolios={portfolios}
+        loans={loans}
+        baseCurrency={baseCurrency}
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <SavingsRateCard />
+        <CommittedMonthlyCard />
+        <NetWorthChangeCard />
+      </div>
+
+      <GraphCard title="Net worth over time">
+        {netWorthQuery.isError ? (
+          <ChartError />
+        ) : netWorthPoints.length < MIN_TREND_POINTS ? (
+          <ChartEmpty>
+            {netWorthQuery.isLoading
+              ? "Loading…"
+              : "No net-worth history yet — it builds up as your balances and assets change."}
+          </ChartEmpty>
+        ) : (
+          <ForecastArea
+            data={{ history: netWorthPoints, projected: netWorthProjected }}
+            metric="net_worth"
+            currency={baseCurrency}
+            locale={locale}
+            ariaLabel={describeTrend("Net worth", netWorthPoints, baseCurrency, locale)}
+            empty={
+              <ChartEmpty>No net-worth history yet — it builds up as your balances and assets change.</ChartEmpty>
+            }
+          />
+        )}
+      </GraphCard>
+
       <GraphCard title="Net worth composition">
         {compositionQuery.isError ? (
           <ChartError />
@@ -269,6 +448,18 @@ function InsightsScreen() {
               </ChartEmpty>
             }
           />
+        )}
+      </GraphCard>
+
+      <GraphCard title="Income vs spend">
+        {cashflowQuery.isError ? (
+          <ChartError />
+        ) : cashflowBars.length === 0 ? (
+          <ChartEmpty>
+            {cashflowQuery.isLoading ? "Loading…" : "No income or spending recorded yet."}
+          </ChartEmpty>
+        ) : (
+          <CashflowChart bars={cashflowBars} currency={baseCurrency} locale={locale} />
         )}
       </GraphCard>
 
@@ -341,6 +532,19 @@ function InsightsScreen() {
           />
         )}
       </GraphCard>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <AccountsSnapshot
+          accounts={activeAccounts}
+          primaryAccountId={primary?.id}
+          primarySeries={primarySeries}
+        />
+        <UpcomingWidget />
+      </div>
+
+      <GoalsWidget />
+
+      <RecentActivity entries={activity} />
     </div>
   );
 }

@@ -34,6 +34,20 @@ interface Overrides {
   netWorthComposition?: Record<string, unknown[]>;
   projects?: unknown[];
   forecast?: Record<string, unknown>;
+  // The widgets relocated from the pre-Track-U Dashboard (Task 6) — each
+  // defaults the same way its old Dashboard.test.tsx counterpart did.
+  accounts?: unknown[];
+  assets?: unknown[];
+  portfolios?: unknown[];
+  loans?: unknown[];
+  goals?: unknown[];
+  activity?: unknown[];
+  transactions?: unknown[];
+  netWorth?: Record<string, unknown[]>;
+  cashflow?: Record<string, unknown[]>;
+  summary?: Record<string, unknown>;
+  connections?: unknown[];
+  upcoming?: { due?: unknown[]; over_budget?: unknown[] };
 }
 
 function mockEndpoints(overrides: Overrides = {}) {
@@ -44,17 +58,56 @@ function mockEndpoints(overrides: Overrides = {}) {
     if (path.startsWith("/analytics/net-worth-composition")) {
       return Promise.resolve(overrides.netWorthComposition ?? {});
     }
+    if (path.startsWith("/analytics/net-worth")) {
+      return Promise.resolve(overrides.netWorth ?? {});
+    }
     if (path.startsWith("/analytics/spending-by-contact")) {
       return Promise.resolve(overrides.spendingByContact ?? {});
     }
     if (path.startsWith("/analytics/spending-by-category")) {
       return Promise.resolve(overrides.spendingByCategory ?? {});
     }
+    if (path.startsWith("/analytics/cashflow")) {
+      return Promise.resolve(overrides.cashflow ?? {});
+    }
+    if (path.startsWith("/analytics/summary")) {
+      return Promise.resolve(overrides.summary ?? {});
+    }
+    if (path.startsWith("/analytics/upcoming")) {
+      return Promise.resolve({
+        due: overrides.upcoming?.due ?? [],
+        over_budget: overrides.upcoming?.over_budget ?? [],
+      });
+    }
     if (path.startsWith("/analytics/forecast")) {
       return Promise.resolve(overrides.forecast ?? {});
     }
     if (path.startsWith("/projects")) {
       return Promise.resolve({ items: overrides.projects ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/accounts")) {
+      return Promise.resolve({ items: overrides.accounts ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/assets")) {
+      return Promise.resolve({ items: overrides.assets ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/portfolios")) {
+      return Promise.resolve({ items: overrides.portfolios ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/loans")) {
+      return Promise.resolve({ items: overrides.loans ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/goals")) {
+      return Promise.resolve({ items: overrides.goals ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/activity")) {
+      return Promise.resolve({ items: overrides.activity ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/transactions")) {
+      return Promise.resolve({ items: overrides.transactions ?? [], next_cursor: null });
+    }
+    if (path.startsWith("/bank-sync/connections")) {
+      return Promise.resolve(overrides.connections ?? []);
     }
     return Promise.reject(new Error(`unexpected path: ${path}`));
   });
@@ -349,7 +402,18 @@ describe("InsightsScreen", () => {
     expect(screen.getByText(/no spending to break down yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no project spending recorded yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no committed transactions to project yet/i)).toBeInTheDocument();
-    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    // The relocated widgets (Task 6) get the same calm treatment — the
+    // "no net-worth history" copy appears twice (the "Net worth over time"
+    // chart and `NetWorthChangeCard` share the same wording on purpose).
+    expect(screen.getAllByText(/no net-worth history yet/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/no income or spending recorded yet/i)).toBeInTheDocument();
+    // None of the breakdown/donut charts render a fake list when empty —
+    // scoped away from `AccountsSnapshot`'s own list, which (correctly)
+    // always renders, empty or not, it's a real (if empty) accounts list,
+    // never a fake chart.
+    expect(
+      screen.queryByRole("list", { name: /spending by contact|spending by category|project spend/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("charts a cash forecast with a dashed line and band from /analytics/forecast, ignoring the period selector", async () => {
@@ -378,6 +442,136 @@ describe("InsightsScreen", () => {
     expect(container.querySelector(".recharts-reference-line")).not.toBeNull();
   });
 
+  it("renders the net-worth hero tiles relocated from the old Dashboard", async () => {
+    mockEndpoints({
+      accounts: [
+        { id: "a1", name: "Checking", type: "checking", currency: "USD", balance_minor: 500000, archived_at: null },
+      ],
+      assets: [{ id: "s1", name: "Model 3", currency: "USD", current_value_minor: 3000000 }],
+    });
+
+    renderScreen();
+
+    // Net worth = 500000 + 3000000 = 3500000 minor units -> $35,000.00
+    expect(await screen.findByText(/35,000\.00/)).toBeInTheDocument();
+  });
+
+  it("charts net worth over time with a forecast tail, relocated from the old Dashboard", async () => {
+    mockEndpoints({
+      accounts: [
+        { id: "a1", name: "Checking", type: "checking", currency: "USD", balance_minor: 500000, archived_at: null },
+      ],
+      netWorth: {
+        USD: [
+          { date: "2026-01-01", net_worth_minor: 100000 },
+          { date: "2026-02-01", net_worth_minor: 120000 },
+          { date: "2026-03-01", net_worth_minor: 150000 },
+        ],
+      },
+    });
+
+    const { container } = renderScreen();
+
+    expect(await screen.findByRole("heading", { name: /net worth over time/i })).toBeInTheDocument();
+    await screen.findByRole("img", { name: /net worth: trending up/i });
+    expect(container.querySelector(".recharts-line")).not.toBeNull();
+  });
+
+  it("charts income vs spend, relocated from the old Dashboard", async () => {
+    mockEndpoints({
+      cashflow: {
+        USD: [
+          { period_start: "2026-01-01", income_minor: 400000, spend_minor: 100000 },
+          { period_start: "2026-02-01", income_minor: 200000, spend_minor: 300000 },
+        ],
+      },
+    });
+
+    const { container } = renderScreen();
+
+    expect(await screen.findByRole("heading", { name: /income vs spend/i })).toBeInTheDocument();
+    await screen.findByRole("img", { name: /income vs spend/i });
+    expect(container.querySelectorAll(".recharts-bar")).toHaveLength(2);
+  });
+
+  it("mounts the three KPI tiles relocated from the old Dashboard", async () => {
+    mockEndpoints({
+      summary: {
+        USD: {
+          savings: {
+            income_minor: 10_000, spend_minor: 4_000, saved_minor: 6_000, rate_bps: 6_000,
+            prev_saved_minor: 0, prev_rate_bps: 0,
+          },
+          committed_monthly: { total_minor: 5_200, subscriptions_minor: 3_200, loans_minor: 1_200, planned_minor: 800 },
+          net_worth_change: {
+            now_minor: 105_000, start_of_month_minor: 70_000, delta_minor: 35_000, pct_bps: 5_000,
+            movers: [{ label: "Cash", delta_minor: 20_000 }],
+          },
+        },
+      },
+    });
+
+    renderScreen();
+
+    expect(await screen.findByRole("heading", { name: /savings rate/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /committed monthly cost/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /net worth change/i })).toBeInTheDocument();
+  });
+
+  it("renders the Goals widget relocated from the old Dashboard", async () => {
+    mockEndpoints();
+
+    renderScreen();
+
+    expect(await screen.findByRole("heading", { name: "Goals" })).toBeInTheDocument();
+    expect(await screen.findByText(/no savings goals yet/i)).toBeInTheDocument();
+  });
+
+  it("renders Recent activity relocated from the old Dashboard", async () => {
+    mockEndpoints({
+      activity: [
+        {
+          id: 1,
+          occurred_at: "2026-09-10T00:00:00.000Z",
+          template_key: "activity.account.created",
+          params: { name: "Checking", type: "checking" },
+        },
+      ],
+    });
+
+    renderScreen();
+
+    expect(await screen.findByRole("heading", { name: /recent activity/i })).toBeInTheDocument();
+    expect(await screen.findByText('Account "Checking" created (checking).')).toBeInTheDocument();
+  });
+
+  it("renders the accounts snapshot and the 30-day upcoming panel relocated from the old Dashboard", async () => {
+    mockEndpoints({
+      accounts: [
+        { id: "a1", name: "Checking", type: "checking", currency: "USD", balance_minor: 500000, archived_at: null },
+      ],
+      upcoming: {
+        due: [
+          { kind: "subscription", id: "s1", label: "Spotify", due_on: "2999-01-01", amount_minor: -1099, currency: "USD" },
+        ],
+        over_budget: [
+          { budget_id: "b1", label: "Groceries", amount_minor: 10000, actual_minor: 12000, over_minor: 2000, currency: "USD" },
+        ],
+      },
+    });
+
+    renderScreen();
+
+    expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
+    expect(await screen.findByText("Checking")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Upcoming" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /spotify/i })).toHaveAttribute(
+      "href",
+      "/subscriptions",
+    );
+    expect(screen.getByText(/over budget/i)).toBeInTheDocument();
+  });
+
   it("routes to the Insights screen from the sidebar nav entry", async () => {
     mockEndpoints({
       spendingByContact: { USD: [{ contact_id: "p1", name: "Landlord", spend_minor: 50000 }] },
@@ -400,7 +594,11 @@ describe("InsightsScreen", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "Insights" }));
+    // `TabBar` (Task 7, AppShell.tsx) also renders an "Insights" tab below
+    // `md`, so this scopes to the sidebar landmark specifically — this test
+    // is about the sidebar nav entry, per its name.
+    const sidebar = within(screen.getByRole("navigation", { name: "Sidebar" }));
+    fireEvent.click(sidebar.getByRole("link", { name: "Insights" }));
 
     expect(await screen.findByRole("heading", { name: "Insights" })).toBeInTheDocument();
     expect(await screen.findByRole("list", { name: /spending by contact/i })).toBeInTheDocument();
