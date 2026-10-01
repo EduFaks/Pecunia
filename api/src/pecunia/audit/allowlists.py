@@ -7,7 +7,10 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     "user": frozenset({"id", "email", "name", "display_name"}),
     "workspace": frozenset({"id", "name"}),
     "settings": frozenset(
-        {"base_currency", "locale", "date_format", "number_format", "timezone", "first_day_of_week"}
+        {
+            "base_currency", "locale", "date_format", "number_format", "timezone",
+            "first_day_of_week", "monthly_budget_minor",
+        }
     ),
     "account": frozenset({"id", "name", "type", "currency", "initial_balance_minor", "is_demo"}),
     "transaction": frozenset(
