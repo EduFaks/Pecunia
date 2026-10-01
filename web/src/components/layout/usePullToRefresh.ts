@@ -7,6 +7,18 @@ import type { TouchEvent } from "react";
  * (too low) or unresponsive (too high). */
 const PULL_THRESHOLD_PX = 64;
 
+/** Whether the page itself (not just the bound element) is scrolled to the
+ * top. This app scrolls via the document/window — `AppShell`'s `<main>` has
+ * no `overflow-y-auto` — so the bound element's own `scrollTop` is always 0
+ * regardless of how far down the page the user has scrolled; `window.scrollY`
+ * is what actually reflects page position. */
+function isPageAtTop(): boolean {
+  if (typeof window !== "undefined" && typeof window.scrollY === "number") {
+    return window.scrollY === 0;
+  }
+  return (document.documentElement?.scrollTop ?? 0) === 0;
+}
+
 export interface UsePullToRefreshOptions {
   onRefresh: () => Promise<void>;
 }
@@ -28,13 +40,17 @@ export interface UsePullToRefreshResult {
 
 /**
  * A minimal, dependency-free pull-to-refresh gesture for a touch screen.
- * Bound to one scrollable container (via `bind`'s `currentTarget`, so no ref
- * plumbing is needed): starting a touch while that container reads
- * `scrollTop === 0` arms the gesture; releasing after the finger has moved
- * down past `PULL_THRESHOLD_PX` from where it started calls `onRefresh`,
- * with `refreshing` true for as long as that promise is in flight. Starting
- * the drag anywhere else (content already scrolled) or releasing short of
- * the threshold does nothing.
+ * Bound to one container (via `bind`'s `currentTarget`, so no ref plumbing
+ * is needed): starting a touch arms the gesture only when the *page* is
+ * scrolled to the top (`isPageAtTop()` — this app scrolls via the
+ * document/window, not the bound element, so `window.scrollY === 0` is the
+ * check that matters; the bound element's own `scrollTop === 0` is checked
+ * too, as a harmless no-op belt-and-suspenders for the case it's ever
+ * scrollable itself). Releasing after the finger has moved down past
+ * `PULL_THRESHOLD_PX` from where it started calls `onRefresh`, with
+ * `refreshing` true for as long as that promise is in flight. Starting the
+ * drag while the page is scrolled down, or releasing short of the
+ * threshold, does nothing.
  *
  * Distance is measured between the `touchstart` Y and the latest known
  * finger Y (updated on every `touchmove`, falling back to `touchend`'s
@@ -54,7 +70,7 @@ export function usePullToRefresh({ onRefresh }: UsePullToRefreshOptions): UsePul
 
   const onTouchStart = useCallback(
     (event: TouchEvent<HTMLElement>) => {
-      if (event.currentTarget.scrollTop > 0) {
+      if (event.currentTarget.scrollTop > 0 || !isPageAtTop()) {
         reset();
         return;
       }

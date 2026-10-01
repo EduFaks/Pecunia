@@ -1,7 +1,13 @@
 import { createElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { usePullToRefresh } from "./usePullToRefresh";
+
+/** Stubs `window.scrollY` for a test — jsdom's own value is always 0, so this
+ * is how a test simulates the page being scrolled down. */
+function setWindowScrollY(value: number) {
+  Object.defineProperty(window, "scrollY", { value, configurable: true, writable: true });
+}
 
 /** Mounts the hook wired to a plain `<div>` via `bind`, the same way
  * `Dashboard.tsx` wires it to its scroll container — `fireEvent.touchStart`/
@@ -25,6 +31,25 @@ function pull(container: HTMLElement, distance: number) {
 }
 
 describe("usePullToRefresh", () => {
+  afterEach(() => {
+    setWindowScrollY(0);
+  });
+
+  it("does not call onRefresh when the page itself is scrolled down, even if the bound element reads scrollTop 0", () => {
+    // Regression test: `AppShell`'s `<main>` has no `overflow-y-auto`, so the
+    // real scroll container on this app is the document/window, not the
+    // `<div>` the hook binds to — that div's own `scrollTop` is always 0.
+    // A user scrolled deep into the page who drags down to scroll back up
+    // must not spuriously trigger a refresh.
+    setWindowScrollY(120);
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    render(createElement(Harness, { onRefresh }));
+
+    pull(screen.getByTestId("scroll-container"), 80);
+
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
   it("calls onRefresh once after a pull past the ~64px threshold is released", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     render(createElement(Harness, { onRefresh }));
