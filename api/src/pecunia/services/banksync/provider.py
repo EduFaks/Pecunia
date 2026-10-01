@@ -13,6 +13,7 @@ cursor) — `pageSize`/`from` both 400. The date-window filter that used to be
 server-side (`from`) is now applied client-side after fetching.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import date
@@ -27,6 +28,14 @@ from pecunia.money import currency_minor_unit_exponent
 logger = logging.getLogger(__name__)
 
 PLUGGY_BASE_URL = "https://api.pluggy.ai"
+
+# A transient connection/DNS failure (EAI_AGAIN — "Temporary failure in name
+# resolution", seen live from Docker's embedded resolver when a whole-workspace
+# "sync now" bursts many lookups back-to-back) means "retry might work", so it
+# should not fail a sync on the first miss. Total attempts per request, with a
+# short linear backoff between them.
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 0.5
 
 # A hard ceiling on pages followed for one _get_paged call — guards against a
 # cursor that keeps legitimately advancing but never actually terminates
@@ -116,8 +125,13 @@ def _extract_after(next_value: str) -> str:
 class PluggyProvider:
     """Real implementation, against Pluggy's Open Finance aggregator API.
     Accepts an injected `httpx.AsyncClient` (tests point it at an
-    `httpx.MockTransport`); without one, each call opens and closes its own
-    short-lived client. The API key from `/auth` is cached in memory for the
+    `httpx.MockTransport`); without one, a single pooled client is lazily
+    created and reused for this instance's whole lifetime — so one DNS
+    resolution plus HTTP keep-alive serves an entire sync instead of a fresh
+    DNS lookup and TLS handshake per call. That per-call churn is what buried
+    Docker's embedded resolver under the all-connections "sync now" burst and
+    surfaced as EAI_AGAIN; a transient connection/DNS error is also retried
+    (see `_send`). The API key from `/auth` is cached in memory for the
     lifetime of this instance (~2h validity per Pluggy) and transparently
     refreshed once on a 401 — callers never see the auth handshake."""
 
@@ -132,28 +146,59 @@ class PluggyProvider:
         self._client_id = client_id
         self._client_secret = client_secret
         self._client = client
+        self._owned_client: httpx.AsyncClient | None = None
         self._timeout = timeout
         self._api_key: str | None = None
 
+    def _get_client(self) -> httpx.AsyncClient:
+        """The injected client (tests) wins; otherwise lazily create one pooled
+        client and reuse it, so DNS is resolved once and the connection to
+        api.pluggy.ai is kept alive across the many calls of a sync."""
+        if self._client is not None:
+            return self._client
+        if self._owned_client is None:
+            self._owned_client = httpx.AsyncClient(base_url=PLUGGY_BASE_URL)
+        return self._owned_client
+
+    async def aclose(self) -> None:
+        """Close the pooled client, if one was created. Safe to call more than
+        once and when only an injected client was ever used (that one is owned
+        by the test and left untouched)."""
+        if self._owned_client is not None:
+            await self._owned_client.aclose()
+            self._owned_client = None
+
+    async def _send(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+        """One HTTP request, retrying only a transient connection/DNS failure
+        (`httpx.ConnectError`/`ConnectTimeout` — which is how EAI_AGAIN
+        surfaces) with a short backoff. HTTP status errors are NOT retried here
+        — `_get` decides what a 4xx/5xx means."""
+        kwargs.setdefault("timeout", self._timeout)
+        client = self._get_client()
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                return await client.request(method, path, **kwargs)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if attempt >= _MAX_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "Pluggy %s %s transient connection failure "
+                    "(attempt %d/%d), retrying: %s",
+                    method, path, attempt, _MAX_ATTEMPTS, exc,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+        raise AssertionError("unreachable")  # pragma: no cover
+
     async def _auth(self) -> str:
         body = {"clientId": self._client_id, "clientSecret": self._client_secret}
-        if self._client is not None:
-            response = await self._client.post("/auth", json=body, timeout=self._timeout)
-        else:
-            async with httpx.AsyncClient(base_url=PLUGGY_BASE_URL) as client:
-                response = await client.post("/auth", json=body, timeout=self._timeout)
+        response = await self._send("POST", "/auth", json=body)
         response.raise_for_status()
         self._api_key = response.json()["apiKey"]
         return self._api_key
 
     async def _request(self, path: str, params: dict[str, object]) -> httpx.Response:
         headers = {"X-API-KEY": self._api_key}
-        if self._client is not None:
-            return await self._client.get(
-                path, params=params, headers=headers, timeout=self._timeout
-            )
-        async with httpx.AsyncClient(base_url=PLUGGY_BASE_URL) as client:
-            return await client.get(path, params=params, headers=headers, timeout=self._timeout)
+        return await self._send("GET", path, params=params, headers=headers)
 
     async def _get(
         self,

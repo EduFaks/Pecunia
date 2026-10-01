@@ -16,6 +16,7 @@ from datetime import date
 import httpx
 import pytest
 
+import pecunia.services.banksync.provider as provider_module
 from pecunia.services.banksync.provider import (
     PLUGGY_BASE_URL,
     BankItemNotFoundError,
@@ -197,6 +198,62 @@ async def test_fetch_connection_400_invalid_id_raises_bank_item_not_found_error(
     provider = _provider(handler)
     with pytest.raises(BankItemNotFoundError):
         await provider.fetch_connection("not-a-uuid")
+
+
+async def test_transient_connect_error_is_retried_then_succeeds(monkeypatch):
+    """EAI_AGAIN ("Temporary failure in name resolution") surfaces as
+    httpx.ConnectError; a transient one must be retried, not fail the call."""
+    monkeypatch.setattr(provider_module, "_RETRY_BACKOFF_SECONDS", 0)
+    state = {"gets": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        state["gets"] += 1
+        if state["gets"] == 1:
+            raise httpx.ConnectError("Temporary failure in name resolution")
+        return httpx.Response(
+            200, json={"id": "item-1", "connector": {"name": "MeuPluggy"}, "status": "UPDATED"}
+        )
+
+    provider = _provider(handler)
+    conn = await provider.fetch_connection("item-1")
+    assert conn.item_id == "item-1"
+    assert state["gets"] == 2  # failed once, retried once, succeeded
+
+
+async def test_transient_connect_error_exhausts_retries_then_raises(monkeypatch):
+    monkeypatch.setattr(provider_module, "_RETRY_BACKOFF_SECONDS", 0)
+    state = {"gets": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        state["gets"] += 1
+        raise httpx.ConnectError("Temporary failure in name resolution")
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connection("item-1")
+    assert state["gets"] == provider_module._MAX_ATTEMPTS  # tried the full budget
+
+
+async def test_http_status_error_is_not_retried(monkeypatch):
+    """A 500 is a server answer, not a transient connect failure — it must be
+    raised on the first attempt, never retried."""
+    monkeypatch.setattr(provider_module, "_RETRY_BACKOFF_SECONDS", 0)
+    state = {"gets": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        state["gets"] += 1
+        return httpx.Response(500, json={"error": "boom"})
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connection("item-1")
+    assert state["gets"] == 1  # no retry on an HTTP status error
 
 
 async def test_fetch_connection_non_404_error_raises_plain_bank_provider_error_not_item_not_found():
