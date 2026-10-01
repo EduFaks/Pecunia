@@ -166,9 +166,16 @@ class SafeToSpendService:
                 sa.select(
                     sa.func.coalesce(sa.func.sum(-Transaction.amount_minor), 0)
                 ).where(
+                    # Defense-in-depth: link.account_id is already workspace-scoped
+                    # via the scoped_select join above, but this keeps the
+                    # aggregate correct on its own if that ever changes.
                     Transaction.workspace_id == workspace_id,
                     Transaction.account_id == link.account_id,
                     Transaction.amount_minor < 0,
+                    # Mirrors AnalyticsService.cashflow's own transfer exclusion —
+                    # a transfer-out leg on the card isn't a purchase, so it must
+                    # not reduce the bill the same way spent_mtd never counts it.
+                    Transaction.transfer_id.is_(None),
                     Transaction.occurred_on >= month_start,
                     Transaction.occurred_on <= today,
                     Transaction.deleted_at.is_(None),

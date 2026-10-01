@@ -15,6 +15,7 @@ from pecunia.models import (
 )
 from pecunia.services.safe_to_spend import SafeToSpendService
 from pecunia.services.settings import set_monthly_budget
+from pecunia.services.transfers import TransferService
 
 TODAY = date(2026, 9, 13)  # mid-month; Sept 2026 has 30 days
 
@@ -281,6 +282,43 @@ async def test_card_bill_excludes_this_months_card_spend_no_double_count(db, ini
     assert brl["committed_cards_minor"] == 1_300_000 - 20_000
     # The card expense is also counted once in spent_mtd (not double-counted
     # again via committed_cards).
+    assert brl["spent_mtd_minor"] == 20_000
+
+
+async def test_card_bill_excludes_transfer_legs_from_card_spend(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="BRL")
+    savings = await _account(db, ws_id, currency="BRL", name="Savings")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+    # A real R$200,00 expense on the card this month (transfer_id NULL) —
+    # this one should reduce the card bill, same as spent_mtd counts it.
+    await _tx(db, ws_id, card, amount=-20_000, on=date(2026, 9, 10))
+    # A R$500,00 transfer OUT of the card this month (e.g. paying the card
+    # from itself into another account) — its card-side leg carries a
+    # non-null transfer_id, so cashflow/spent_mtd excludes it. card_spend_mtd
+    # must exclude it too, or the card bill gets over-subtracted.
+    await TransferService(db).create(
+        ws_id,
+        from_account_id=card.id,
+        to_account_id=savings.id,
+        amount_minor=50_000,
+        currency="BRL",
+        description="Card payment",
+        occurred_on=date(2026, 9, 12),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    # Only the real expense (-20_000) should count as card_spend_mtd; the
+    # transfer leg (-50_000) must NOT reduce the bill. Without the fix this
+    # would be 1_300_000 - 70_000 = 1_230_000.
+    assert brl["committed_cards_minor"] == 1_300_000 - 20_000
+    # And spent_mtd must likewise exclude the transfer leg.
     assert brl["spent_mtd_minor"] == 20_000
 
 
