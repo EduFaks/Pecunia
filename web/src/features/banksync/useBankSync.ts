@@ -134,28 +134,27 @@ export function useBankConnections() {
   });
 }
 
-/** Discovered Pluggy connections (each with its nested accounts, some
- * already linked). `enabled` gates the fetch — the link wizard is the only
- * consumer, so discovery must not fire while its dialog is closed; pass its
- * `open` prop straight through. Takes an optional callback to dismiss the
- * query gracefully when discovery is unavailable (503). Returns an empty
- * array on that error unless a callback catches it. */
-export function useBankDiscovery(enabled: boolean, onUnavailable?: () => void) {
+/** A single discovered Pluggy connection, looked up by item id (fix wave 2:
+ * Meu Pluggy's free tier has no client-wide item listing — `GET
+ * /v2/items` 403s there — so discovery is one item at a time, by the id the
+ * user copies from the Pluggy dashboard). `enabled` gates the fetch
+ * alongside a non-empty `itemId` — the link wizard is the only consumer, and
+ * must fetch neither while its dialog is closed nor before the user has
+ * actually submitted an item id (pass its `open` prop straight through for
+ * the former; the latter is handled here). A 404 (unknown item) and a 503
+ * (provider unavailable) both surface as `ApiError` on `.error` — the
+ * caller distinguishes them by `.status`, same as any other query error;
+ * this hook does not swallow or redirect either. */
+export function useBankDiscovery(itemId: string, enabled: boolean) {
+  const trimmedItemId = itemId.trim();
   return useQuery({
-    queryKey: [...qk.bankSync, "discovery"],
-    enabled,
-    queryFn: async () => {
-      try {
-        return await apiFetch<DiscoveredConnectionOut[]>("/bank-sync/discovery");
-      } catch (err) {
-        const error = err as { status?: number };
-        if (error.status === 503) {
-          onUnavailable?.();
-          return [];
-        }
-        throw err;
-      }
-    },
+    queryKey: [...qk.bankSync, "discovery", trimmedItemId],
+    enabled: enabled && trimmedItemId.length > 0,
+    retry: false,
+    queryFn: () =>
+      apiFetch<DiscoveredConnectionOut>(
+        `/bank-sync/discovery?item_id=${encodeURIComponent(trimmedItemId)}`,
+      ),
   });
 }
 

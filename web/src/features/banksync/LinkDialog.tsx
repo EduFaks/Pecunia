@@ -4,6 +4,7 @@ import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
 import Card from "../../components/ui/Card";
 import { useToast } from "../../components/ui/Toast";
+import type { ApiError } from "../../lib/api";
 import { apiFetch } from "../../lib/api";
 import { qk } from "../../lib/queries";
 import { useBankDiscovery, useLinkAccount } from "./useBankSync";
@@ -20,24 +21,15 @@ interface LinkDialogProps {
   onClose: () => void;
 }
 
-/** A discovered account flattened out of its parent `DiscoveredConnectionOut`
- * — the wizard picks one account at a time, so it needs the account plus
- * the item/institution identifiers from its connection alongside it. */
-interface FlatDiscoveredAccount {
-  itemId: string;
-  institutionName: string;
-  account: DiscoveredAccountOut;
-}
-
-function discoveredKey(flat: FlatDiscoveredAccount): string {
-  return `${flat.itemId}:${flat.account.pluggy_account_id}`;
-}
-
 /**
- * Link wizard dialog (Track T). Step 1: select a discovered Pluggy account
- * (filtered to unlinked, across all discovered connections). Step 2: link to
- * an existing Pecunia account (filtered to the same currency as the
- * discovered account) or create new. Handles 503 discovery gracefully.
+ * Link wizard dialog (Track T; fix wave 2 — Meu Pluggy free tier). Step 0:
+ * the user pastes the Pluggy Item ID and submits it ("Buscar contas") — Meu
+ * Pluggy's free tier has no client-wide item listing, so discovery is one
+ * item at a time, by id, rather than a picker over every connected bank.
+ * Step 1: select a discovered account on that item (filtered to unlinked).
+ * Step 2: link to an existing Pecunia account (filtered to the same
+ * currency as the discovered account) or create new. A 404 on that item id
+ * is shown inline distinctly from a 503 (provider unavailable).
  */
 /** Today's date as an ISO `YYYY-MM-DD` string — the default (and, absent
  * user input, the only) value `sync_from` ever took before finding 13's
@@ -49,11 +41,12 @@ function todayIsoDate(): string {
 function LinkDialog({ open, onClose }: LinkDialogProps) {
   const { showToast } = useToast();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [selectedDiscovered, setSelectedDiscovered] = useState<FlatDiscoveredAccount | null>(null);
+  const [itemIdInput, setItemIdInput] = useState("");
+  const [submittedItemId, setSubmittedItemId] = useState("");
+  const [selectedAccount, setSelectedAccount] = useState<DiscoveredAccountOut | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [createMode, setCreateMode] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
-  const [discoveryUnavailable, setDiscoveryUnavailable] = useState(false);
   // The user picks the sync start date at link time — default today, but
   // never locked to it (finding 13: a locked decision was rendering NO date
   // input at all).
@@ -65,16 +58,18 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
     enabled: open,
   });
 
-  // Discovery must not fetch while the dialog is closed — `open` gates it.
-  const discoveryQuery = useBankDiscovery(open, () => setDiscoveryUnavailable(true));
+  // Discovery fires only once the user has submitted a non-empty item id
+  // AND the dialog is open — never on every keystroke, never while closed.
+  const discoveryQuery = useBankDiscovery(submittedItemId, open);
   const linkAccount = useLinkAccount();
 
   const handleClose = useCallback(() => {
-    setSelectedDiscovered(null);
+    setItemIdInput("");
+    setSubmittedItemId("");
+    setSelectedAccount(null);
     setSelectedAccountId(null);
     setCreateMode(false);
     setNewAccountName("");
-    setDiscoveryUnavailable(false);
     setSyncFrom(todayIsoDate());
     onClose();
   }, [onClose]);
@@ -98,17 +93,16 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, handleClose]);
 
-  // Flatten discovered connections' accounts (each tagged with its parent
-  // item/institution), filtered to those not yet linked to a Pecunia account.
-  const unlinkedDiscovered = useMemo<FlatDiscoveredAccount[]>(() => {
-    return (discoveryQuery.data ?? []).flatMap((connection) =>
-      connection.accounts
-        .filter((account) => account.linked_account_id === null)
-        .map((account) => ({
-          itemId: connection.item_id,
-          institutionName: connection.institution_name,
-          account,
-        })),
+  function handleSearch() {
+    setSelectedAccount(null);
+    setSubmittedItemId(itemIdInput.trim());
+  }
+
+  // The discovered connection's accounts, filtered to those not yet linked
+  // to a Pecunia account.
+  const unlinkedAccounts = useMemo<DiscoveredAccountOut[]>(() => {
+    return (discoveryQuery.data?.accounts ?? []).filter(
+      (account) => account.linked_account_id === null,
     );
   }, [discoveryQuery.data]);
 
@@ -116,25 +110,32 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
   // same currency as the selected discovered account — linking across
   // currencies isn't representable (mirrors the backend's CURRENCY_MISMATCH).
   const filteredAccounts = useMemo(() => {
-    if (!selectedDiscovered) return [];
+    if (!selectedAccount) return [];
     return (accountsQuery.data?.items ?? []).filter(
-      (acc) => acc.currency === selectedDiscovered.account.currency,
+      (acc) => acc.currency === selectedAccount.currency,
     );
-  }, [selectedDiscovered, accountsQuery.data]);
+  }, [selectedAccount, accountsQuery.data]);
+
+  const discoveryErrorStatus = discoveryQuery.isError
+    ? (discoveryQuery.error as ApiError | undefined)?.status
+    : undefined;
+  const itemNotFound = discoveryErrorStatus === 404;
+  const providerUnavailable = discoveryErrorStatus === 503;
+  const genericDiscoveryError = discoveryQuery.isError && !itemNotFound && !providerUnavailable;
 
   async function handleLink() {
-    if (!selectedDiscovered) return;
+    if (!selectedAccount) return;
 
     try {
       const payload = {
-        pluggy_item_id: selectedDiscovered.itemId,
-        pluggy_account_id: selectedDiscovered.account.pluggy_account_id,
+        pluggy_item_id: submittedItemId,
+        pluggy_account_id: selectedAccount.pluggy_account_id,
         sync_from: syncFrom,
         ...(createMode
           ? {
               new_account: {
                 name: newAccountName,
-                currency: selectedDiscovered.account.currency,
+                currency: selectedAccount.currency,
               },
             }
           : selectedAccountId
@@ -173,26 +174,56 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
         </h2>
 
         <div className="mt-4 flex flex-col gap-4">
-          {discoveryUnavailable ? (
+          {/* Step 0: enter the Pluggy Item ID and search */}
+          <div className="flex flex-col gap-3">
+            <label htmlFor="pluggy-item-id" className="block font-mono text-xs uppercase tracking-[0.15em] text-ink-faint">
+              Item ID
+            </label>
+            <input
+              id="pluggy-item-id"
+              type="text"
+              className="rounded-pc border border-hairline bg-surface-0 px-3 py-2 text-sm text-ink"
+              value={itemIdInput}
+              onChange={(e) => setItemIdInput(e.target.value)}
+            />
+            <p className="text-xs text-ink-faint">
+              Copie o Item ID no painel da Pluggy (dashboard.pluggy.ai → sua aplicação → item conectado).
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={discoveryQuery.isFetching}
+              disabled={!itemIdInput.trim()}
+              onClick={handleSearch}
+            >
+              Buscar contas
+            </Button>
+          </div>
+
+          {itemNotFound ? (
+            <Callout variant="negative">Item não encontrado — confira o ID.</Callout>
+          ) : null}
+
+          {providerUnavailable ? (
             <Callout variant="info">
               Bank discovery is temporarily unavailable. Please try again later.
             </Callout>
           ) : null}
 
-          {discoveryQuery.isError && !discoveryUnavailable ? (
+          {genericDiscoveryError ? (
             <Callout variant="negative">Couldn't load discovered accounts. Please try again.</Callout>
           ) : null}
 
-          {discoveryQuery.isLoading ? (
+          {discoveryQuery.isFetching ? (
             <p className="text-sm text-ink-faint">Loading discovered accounts...</p>
           ) : null}
 
-          {unlinkedDiscovered.length === 0 && !discoveryQuery.isLoading && !discoveryUnavailable ? (
+          {submittedItemId && !discoveryQuery.isFetching && !discoveryQuery.isError && unlinkedAccounts.length === 0 ? (
             <p className="text-sm text-ink-faint">No new accounts to link.</p>
           ) : null}
 
           {/* Step 1: Select discovered account */}
-          {unlinkedDiscovered.length > 0 && !selectedDiscovered ? (
+          {unlinkedAccounts.length > 0 && !selectedAccount ? (
             <div className="flex flex-col gap-3">
               <label htmlFor="discovered-account" className="block font-mono text-xs uppercase tracking-[0.15em] text-ink-faint">
                 Discovered Account
@@ -201,16 +232,16 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
                 id="discovered-account"
                 className="rounded-pc border border-hairline bg-surface-0 px-3 py-2 text-sm text-ink"
                 onChange={(e) => {
-                  const discovered = unlinkedDiscovered.find(
-                    (d) => discoveredKey(d) === e.target.value,
+                  const account = unlinkedAccounts.find(
+                    (a) => a.pluggy_account_id === e.target.value,
                   );
-                  setSelectedDiscovered(discovered || null);
+                  setSelectedAccount(account || null);
                 }}
               >
                 <option value="">Select an account...</option>
-                {unlinkedDiscovered.map((flat) => (
-                  <option key={discoveredKey(flat)} value={discoveredKey(flat)}>
-                    {flat.account.name} — {flat.institutionName} ({flat.account.pluggy_account_id})
+                {unlinkedAccounts.map((account) => (
+                  <option key={account.pluggy_account_id} value={account.pluggy_account_id}>
+                    {account.name} ({account.pluggy_account_id})
                   </option>
                 ))}
               </select>
@@ -218,7 +249,7 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
           ) : null}
 
           {/* Step 2: Select target account or create new */}
-          {selectedDiscovered && !createMode ? (
+          {selectedAccount && !createMode ? (
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-3">
                 <label htmlFor="pecunia-account" className="block font-mono text-xs uppercase tracking-[0.15em] text-ink-faint">
@@ -255,7 +286,7 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
           ) : null}
 
           {/* Create new account form */}
-          {selectedDiscovered && createMode ? (
+          {selectedAccount && createMode ? (
             <div className="flex flex-col gap-3">
               <label htmlFor="new-account-name" className="block font-mono text-xs uppercase tracking-[0.15em] text-ink-faint">
                 Account Name
@@ -280,7 +311,7 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
 
           {/* Sync start date — user-editable, defaults to today (finding 13:
               this used to be silently locked to today with no input). */}
-          {selectedDiscovered ? (
+          {selectedAccount ? (
             <div className="flex flex-col gap-3">
               <label htmlFor="sync-from" className="block font-mono text-xs uppercase tracking-[0.15em] text-ink-faint">
                 Sync From
@@ -305,7 +336,7 @@ function LinkDialog({ open, onClose }: LinkDialogProps) {
             variant="primary"
             loading={linkAccount.isPending}
             disabled={
-              !selectedDiscovered ||
+              !selectedAccount ||
               (createMode && !newAccountName.trim()) ||
               (!createMode && !selectedAccountId)
             }

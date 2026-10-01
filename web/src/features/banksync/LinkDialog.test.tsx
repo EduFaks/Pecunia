@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError } from "../../lib/api";
 import { apiFetch } from "../../lib/api";
 import { ToastProvider } from "../../components/ui/Toast";
 import { qk } from "../../lib/queries";
@@ -12,6 +13,56 @@ vi.mock("../../lib/api", async (importOriginal) => {
 });
 const mockApiFetch = vi.mocked(apiFetch);
 
+/** Mirrors DiscoveredConnectionOut (api/src/pecunia/api/banksync.py) — a
+ * SINGLE connection object, keyed by item id (fix wave 2: Meu Pluggy's free
+ * tier has no client-wide item listing, so GET /bank-sync/discovery now
+ * requires `item_id` and returns one connection, not a list). */
+const ITEM1_CONNECTION = {
+  item_id: "item1",
+  institution_name: "Banco do Brasil",
+  status: "UPDATED",
+  accounts: [
+    {
+      pluggy_account_id: "acct-bank-1",
+      type: "BANK",
+      subtype: "checking_account",
+      name: "Conta Corrente",
+      number: "1234",
+      balance_minor: 500_000,
+      currency: "BRL",
+      linked_account_id: null,
+    },
+    {
+      pluggy_account_id: "acct-cc-1",
+      type: "CREDIT",
+      subtype: "credit_card",
+      name: "Cartao",
+      number: "5678",
+      balance_minor: 200_000,
+      currency: "BRL",
+      linked_account_id: "acct2", // already linked
+    },
+  ],
+};
+
+const ITEM2_CONNECTION = {
+  item_id: "item2",
+  institution_name: "Chase",
+  status: "UPDATED",
+  accounts: [
+    {
+      pluggy_account_id: "acct-bank-2",
+      type: "BANK",
+      subtype: "checking_account",
+      name: "Checking",
+      number: "9999",
+      balance_minor: 1_000_000,
+      currency: "USD",
+      linked_account_id: null,
+    },
+  ],
+};
+
 function installFakeBackend() {
   mockApiFetch
     .mockReset()
@@ -22,54 +73,16 @@ function installFakeBackend() {
         return Promise.resolve({ user: null, preferences: null });
       }
       if (path.startsWith("/bank-sync/discovery") && method === "GET") {
-        // Shape mirrors DiscoveredConnectionOut (api/src/pecunia/api/banksync.py):
-        // connections nest their discovered accounts, each carrying its own currency.
-        return Promise.resolve([
-          {
-            item_id: "item1",
-            institution_name: "Banco do Brasil",
-            status: "UPDATED",
-            accounts: [
-              {
-                pluggy_account_id: "acct-bank-1",
-                type: "BANK",
-                subtype: "checking_account",
-                name: "Conta Corrente",
-                number: "1234",
-                balance_minor: 500_000,
-                currency: "BRL",
-                linked_account_id: null,
-              },
-              {
-                pluggy_account_id: "acct-cc-1",
-                type: "CREDIT",
-                subtype: "credit_card",
-                name: "Cartao",
-                number: "5678",
-                balance_minor: 200_000,
-                currency: "BRL",
-                linked_account_id: "acct2", // already linked
-              },
-            ],
-          },
-          {
-            item_id: "item2",
-            institution_name: "Chase",
-            status: "UPDATED",
-            accounts: [
-              {
-                pluggy_account_id: "acct-bank-2",
-                type: "BANK",
-                subtype: "checking_account",
-                name: "Checking",
-                number: "9999",
-                balance_minor: 1_000_000,
-                currency: "USD",
-                linked_account_id: null,
-              },
-            ],
-          },
-        ]);
+        const itemId = new URLSearchParams(path.split("?")[1]).get("item_id");
+        if (itemId === "item1") return Promise.resolve(ITEM1_CONNECTION);
+        if (itemId === "item2") return Promise.resolve(ITEM2_CONNECTION);
+        if (itemId === "item-missing") {
+          return Promise.reject(new ApiError(404, "PLUGGY_ITEM_NOT_FOUND"));
+        }
+        if (itemId === "item-down") {
+          return Promise.reject(new ApiError(503, "BANK_PROVIDER_UNAVAILABLE"));
+        }
+        return Promise.reject(new Error(`unexpected item_id: ${itemId}`));
       }
       if (path.startsWith("/accounts") && method === "GET") {
         return Promise.resolve({
@@ -180,43 +193,64 @@ function renderDialog(props = { open: true, onClose: vi.fn() }) {
   );
 }
 
+async function enterAndSearchItemId(itemId: string) {
+  const itemIdInput = await screen.findByLabelText(/item id/i);
+  fireEvent.change(itemIdInput, { target: { value: itemId } });
+  const searchButton = await screen.findByRole("button", { name: /buscar contas/i });
+  fireEvent.click(searchButton);
+}
+
 describe("LinkDialog", () => {
   beforeEach(() => {
     installFakeBackend();
   });
 
-  it("does not fetch discovery while closed, and fetches once opened", async () => {
+  it("does not fetch discovery while closed, or before an item id is submitted", async () => {
     renderDialog({ open: false, onClose: vi.fn() });
-
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(mockApiFetch.mock.calls.some(([path]) => path === "/bank-sync/discovery")).toBe(false);
+    expect(mockApiFetch.mock.calls.some(([path]) => String(path).startsWith("/bank-sync/discovery"))).toBe(
+      false,
+    );
+
+    renderDialog();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockApiFetch.mock.calls.some(([path]) => String(path).startsWith("/bank-sync/discovery"))).toBe(
+      false,
+    );
+  });
+
+  it("fetches discovery for the submitted item id only after Buscar contas is clicked", async () => {
+    renderDialog();
+    await enterAndSearchItemId("item1");
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/bank-sync/discovery?item_id=item1");
+    });
   });
 
   it("filters out already-linked discovered accounts", async () => {
     renderDialog();
+    await enterAndSearchItemId("item1");
 
-    // Should show unlinked accounts (acct-bank-1, acct-bank-2)
-    // Should NOT show the already-linked acct-cc-1
+    // Should show the unlinked acct-bank-1, not the already-linked acct-cc-1.
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
     const options = discoverSelect.querySelectorAll("option");
     const linkedOption = Array.from(options).find((opt) => opt.textContent?.includes("acct-cc-1"));
     expect(linkedOption).toBeUndefined();
 
-    const unlinkedOptions = Array.from(options).filter((opt) =>
-      ["acct-bank-1", "acct-bank-2"].some((id) => opt.textContent?.includes(id)),
-    );
-    expect(unlinkedOptions.length).toBe(2);
+    const unlinkedOption = Array.from(options).find((opt) => opt.textContent?.includes("acct-bank-1"));
+    expect(unlinkedOption).toBeInTheDocument();
   });
 
   it("filters existing account options to the same currency as the discovered account", async () => {
     renderDialog();
+    await enterAndSearchItemId("item1");
 
-    // Select the BRL discovered account (Banco do Brasil / Conta Corrente)
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
-    fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
+    fireEvent.change(discoverSelect, { target: { value: "acct-bank-1" } });
 
-    // Should show only the BRL Pecunia account (Conta BRL)
-    // Should NOT show the USD accounts (Checking, Credit Card) or the EUR one (Savings EUR)
+    // Should show only the BRL Pecunia account (Conta BRL), not the USD
+    // accounts (Checking, Credit Card) or the EUR one (Savings EUR).
     const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
     const accountOptions = pecuniaSelect.querySelectorAll("option");
 
@@ -229,18 +263,16 @@ describe("LinkDialog", () => {
     expect(nonBrlOption).toBeUndefined();
   });
 
-  it("posts with account_id when linking to existing account", async () => {
+  it("posts with the submitted item id and account_id when linking to an existing account", async () => {
     renderDialog();
+    await enterAndSearchItemId("item1");
 
-    // Select the BRL discovered account
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
-    fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
+    fireEvent.change(discoverSelect, { target: { value: "acct-bank-1" } });
 
-    // Select the matching-currency existing account
     const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
     fireEvent.change(pecuniaSelect, { target: { value: "acct4" } });
 
-    // Submit - now the button should be enabled
     const submitButton = await screen.findByRole("button", { name: /link account/i });
     fireEvent.click(submitButton);
 
@@ -264,9 +296,10 @@ describe("LinkDialog", () => {
     // rendered — the locked-in decision is that the user picks the start
     // date at link time (default today).
     renderDialog();
+    await enterAndSearchItemId("item1");
 
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
-    fireEvent.change(discoverSelect, { target: { value: "item1:acct-bank-1" } });
+    fireEvent.change(discoverSelect, { target: { value: "acct-bank-1" } });
 
     const pecuniaSelect = await screen.findByRole("combobox", { name: /pecunia account/i });
     fireEvent.change(pecuniaSelect, { target: { value: "acct4" } });
@@ -292,20 +325,17 @@ describe("LinkDialog", () => {
 
   it("posts with new_account (using the discovered account's currency) when creating linked account", async () => {
     renderDialog();
+    await enterAndSearchItemId("item2");
 
-    // Select the USD discovered account (Chase / Checking)
     const discoverSelect = await screen.findByRole("combobox", { name: /discovered account/i });
-    fireEvent.change(discoverSelect, { target: { value: "item2:acct-bank-2" } });
+    fireEvent.change(discoverSelect, { target: { value: "acct-bank-2" } });
 
-    // Choose "Create new account"
     const createButton = await screen.findByRole("button", { name: /create new account/i });
     fireEvent.click(createButton);
 
-    // Fill in new account form
     const nameInput = await screen.findByLabelText(/account name/i);
     fireEvent.change(nameInput, { target: { value: "New Checking" } });
 
-    // Submit
     const submitButton = await screen.findByRole("button", { name: /link account/i });
     fireEvent.click(submitButton);
 
@@ -327,17 +357,17 @@ describe("LinkDialog", () => {
     });
   });
 
-  it("handles 503 discovery unavailable gracefully", async () => {
-    mockApiFetch.mockImplementation((path: string) => {
-      if (path === "/bank-sync/discovery") {
-        return Promise.reject({ status: 503 });
-      }
-      return Promise.resolve(null);
-    });
-
+  it("shows an inline message when the item id isn't found (404)", async () => {
     renderDialog();
+    await enterAndSearchItemId("item-missing");
 
-    // Should show degraded UI or message
+    expect(await screen.findByText(/item não encontrado/i)).toBeInTheDocument();
+  });
+
+  it("handles 503 discovery unavailable gracefully", async () => {
+    renderDialog();
+    await enterAndSearchItemId("item-down");
+
     expect(await screen.findByText(/unavailable|offline|try again/i)).toBeInTheDocument();
   });
 });
