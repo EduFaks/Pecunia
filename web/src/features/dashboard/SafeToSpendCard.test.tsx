@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
-import SafeToSpendCard, { safeToSpendPercent } from "./SafeToSpendCard";
+import SafeToSpendCard from "./SafeToSpendCard";
 
 vi.mock("../../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/api")>();
@@ -29,10 +29,14 @@ const BASE_ENTRY = {
   limited_by: "income" as const,
   expected_income_minor: 50_000,
   committed_remaining_minor: 5_000,
+  committed_cards_minor: 0,
+  committed_other_minor: 5_000,
   spent_mtd_minor: 22_000,
   monthly_budget_minor: null,
   days_remaining: 10,
   daily_allowance_minor: 2_300,
+  projected_income_minor: 50_000,
+  projected_expense_minor: 27_000,
 };
 
 function mockSafeToSpend(entry: Record<string, unknown> | null, putResponse?: unknown) {
@@ -106,6 +110,84 @@ describe("SafeToSpendCard", () => {
     expect(screen.getByText(/220\.00/)).toBeInTheDocument(); // spent MTD
   });
 
+  it("signs and colors the breakdown: income positive, committed/spent negative", async () => {
+    mockSafeToSpend(BASE_ENTRY);
+
+    renderCard();
+
+    await screen.findByText(/renda/i);
+
+    const plus = screen.getByText("+");
+    expect(plus).toHaveClass("text-positive");
+
+    const minuses = screen.getAllByText("−");
+    expect(minuses).toHaveLength(2); // fixos a vir + gasto
+    minuses.forEach((minus) => expect(minus).toHaveClass("text-negative"));
+  });
+
+  it("shows the credit-card sub-note when committed_cards_minor is positive", async () => {
+    mockSafeToSpend({ ...BASE_ENTRY, committed_cards_minor: 3_000, committed_other_minor: 2_000 });
+
+    renderCard();
+
+    expect(await screen.findByText(/inclui fatura de cartão/i)).toBeInTheDocument();
+    expect(screen.getByText(/\$30\.00/)).toBeInTheDocument(); // not "$230.00" (the hero figure)
+  });
+
+  it("omits the credit-card sub-note when committed_cards_minor is zero", async () => {
+    mockSafeToSpend(BASE_ENTRY);
+
+    renderCard();
+
+    await screen.findByText(/renda/i);
+    expect(screen.queryByText(/inclui fatura de cartão/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the segmented bar's spent portion as a progressbar against the month total", async () => {
+    mockSafeToSpend(BASE_ENTRY);
+
+    renderCard();
+
+    const spentBar = await screen.findByRole("progressbar", { name: /gasto do mês/i });
+    expect(spentBar).toHaveAttribute("aria-valuenow", "22000");
+    expect(spentBar).toHaveAttribute("aria-valuemax", "50000");
+  });
+
+  it("renders three stacked segments in the bar", async () => {
+    mockSafeToSpend(BASE_ENTRY);
+
+    const { container } = renderCard();
+
+    await screen.findByText(/renda/i);
+    const segments = container.querySelectorAll("[data-safe-to-spend-segment]");
+    expect(segments).toHaveLength(3);
+    expect(container.querySelector('[data-safe-to-spend-segment="spent"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-safe-to-spend-segment="committed"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-safe-to-spend-segment="free"]')).toBeInTheDocument();
+  });
+
+  it("shows a budget marker on the bar when a monthly budget is set", async () => {
+    mockSafeToSpend({ ...BASE_ENTRY, monthly_budget_minor: 25_000 });
+
+    renderCard();
+
+    // Distinct from the budget *editor*'s "Orçamento mensal" field label —
+    // asserted by data attribute too, so a copy change to either label can't
+    // silently make this test match the wrong element.
+    expect(await screen.findByLabelText(/marcador de orçamento/i)).toBeInTheDocument();
+    expect(document.querySelector("[data-safe-to-spend-budget-marker]")).toBeInTheDocument();
+  });
+
+  it("omits the budget marker when no monthly budget is set", async () => {
+    mockSafeToSpend(BASE_ENTRY);
+
+    renderCard();
+
+    await screen.findByText(/renda/i);
+    expect(screen.queryByLabelText(/marcador de orçamento/i)).not.toBeInTheDocument();
+    expect(document.querySelector("[data-safe-to-spend-budget-marker]")).not.toBeInTheDocument();
+  });
+
   it("shows the negative tone and overspend note when displayed_safe_minor is negative", async () => {
     mockSafeToSpend({
       ...BASE_ENTRY,
@@ -176,23 +258,5 @@ describe("SafeToSpendCard", () => {
       "/settings/monthly-budget",
       expect.objectContaining({ method: "PUT" }),
     );
-  });
-});
-
-describe("safeToSpendPercent", () => {
-  it("computes a clamped percent of spend against the ceiling", () => {
-    expect(safeToSpendPercent(5_000, 5_000)).toBe(50);
-  });
-
-  it("clamps at 100 when the safe amount is negative (ceiling collapses to spent)", () => {
-    expect(safeToSpendPercent(5_000, -2_000)).toBe(100);
-  });
-
-  it("returns 0 when nothing has been spent and nothing is safe (no division by zero)", () => {
-    expect(safeToSpendPercent(0, 0)).toBe(0);
-  });
-
-  it("never exceeds 100 even when spend somehow exceeds the ceiling", () => {
-    expect(safeToSpendPercent(9_000, 1_000)).toBe(90);
   });
 });
