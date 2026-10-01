@@ -1128,3 +1128,29 @@ async def test_summary_endpoint_returns_per_currency_metrics(client, db, initial
     assert {"savings", "committed_monthly", "net_worth_change"} <= set(usd)
     assert usd["savings"]["income_minor"] == 5_000
     assert usd["net_worth_change"]["now_minor"] == 15_000
+
+
+# ------------------------------------------------------------ safe-to-spend
+
+
+async def test_safe_to_spend_endpoint_returns_per_currency_shape(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="BRL", name="BRL")
+    await _tx(db, ws_id, acc, amount=50_000, on=_today_utc(), currency="BRL")
+    await db.commit()  # the request runs in its own session
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/safe-to-spend", headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    # BRL is the base currency (DEFAULT_PREFERENCES) — it must always render,
+    # even for a workspace whose data happens to live in another currency.
+    assert "BRL" in body
+    brl = body["BRL"]
+    assert {
+        "safe_minor", "displayed_safe_minor", "limited_by", "expected_income_minor",
+        "committed_remaining_minor", "spent_mtd_minor", "monthly_budget_minor",
+        "days_remaining", "daily_allowance_minor",
+    } <= set(brl)
+    assert brl["expected_income_minor"] == 50_000
+    assert brl["limited_by"] in ("income", "budget")
