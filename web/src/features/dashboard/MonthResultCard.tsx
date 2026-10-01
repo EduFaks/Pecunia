@@ -20,6 +20,13 @@ import { useSafeToSpend } from "./useDashboard";
  * (`text-negative`/`--pc-negative`) below — matching the brief's `>= 0`
  * threshold, which is why this doesn't just reuse `MoneyText`'s
  * `colorBySign` (that prop treats exactly zero as neutral ink).
+ *
+ * Each "entrou"/"saiu" row also shows a muted "(previsto …)" figure from
+ * `useSafeToSpend`'s `projected_income_minor`/`projected_expense_minor` —
+ * the same end-of-month projection already computed for the safe-to-spend
+ * metric, reused here rather than recomputed. Always rendered, even when it
+ * equals the actual (nothing else scheduled this month is still a
+ * projection, not an absence of one).
  */
 function MonthResultCard() {
   const { base_currency } = usePreferences();
@@ -52,11 +59,33 @@ function MonthResultCard() {
         <div className="mt-5 flex flex-col gap-2 min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 min-w-0">
             <span className="text-sm text-ink-2">Entrou</span>
-            <MoneyText minor={savings.income_minor} currency={base_currency} className="text-sm" />
+            <span className="flex flex-wrap items-baseline justify-end gap-x-1.5 min-w-0">
+              <MoneyText minor={savings.income_minor} currency={base_currency} className="text-sm" />
+              <span className="text-xs text-ink-faint">
+                (previsto{" "}
+                <MoneyText
+                  minor={entry.projected_income_minor}
+                  currency={base_currency}
+                  className="text-xs text-ink-faint"
+                />
+                )
+              </span>
+            </span>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 min-w-0">
             <span className="text-sm text-ink-2">Saiu</span>
-            <MoneyText minor={savings.spend_minor} currency={base_currency} className="text-sm" />
+            <span className="flex flex-wrap items-baseline justify-end gap-x-1.5 min-w-0">
+              <MoneyText minor={savings.spend_minor} currency={base_currency} className="text-sm" />
+              <span className="text-xs text-ink-faint">
+                (previsto{" "}
+                <MoneyText
+                  minor={entry.projected_expense_minor}
+                  currency={base_currency}
+                  className="text-xs text-ink-faint"
+                />
+                )
+              </span>
+            </span>
           </div>
 
           <div className="mt-3 border-t border-hairline pt-3 min-w-0">

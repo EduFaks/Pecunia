@@ -21,6 +21,9 @@ const PREFERENCES = {
 
 // income(500.00) - committed(50.00) - spent(220.00) = safe(230.00) — a
 // positive projection, mirroring SafeToSpendCard.test.tsx's fixture.
+// projected_income/expense deliberately differ from SAVINGS' MTD actuals
+// (550.00/240.00 vs 500.00/220.00) so tests can tell actual and projected
+// figures apart.
 const SAFE_ENTRY = {
   safe_minor: 23_000,
   displayed_safe_minor: 23_000,
@@ -31,6 +34,8 @@ const SAFE_ENTRY = {
   monthly_budget_minor: null,
   days_remaining: 10,
   daily_allowance_minor: 2_300,
+  projected_income_minor: 55_000,
+  projected_expense_minor: 24_000,
 };
 
 const SAVINGS = {
@@ -95,6 +100,50 @@ describe("MonthResultCard", () => {
     expect(screen.getByText(/saiu/i)).toBeInTheDocument();
     expect(screen.getByText(/500\.00/)).toBeInTheDocument(); // income MTD
     expect(screen.getByText(/220\.00/)).toBeInTheDocument(); // spend MTD
+  });
+
+  it("shows a projected figure alongside each actual, in a muted tone", async () => {
+    mockEndpoints({ savings: SAVINGS, safeToSpend: SAFE_ENTRY });
+
+    renderCard();
+
+    await screen.findByText(/entrou/i);
+
+    // "(previsto …)" appears once per row (income + expense).
+    const previstoNotes = screen.getAllByText(/previsto/i);
+    expect(previstoNotes).toHaveLength(2);
+    previstoNotes.forEach((note) => expect(note).toHaveClass("text-ink-faint"));
+
+    // Projected figures (from useSafeToSpend) render in the muted tone...
+    const projectedIncome = screen.getByText(/550\.00/);
+    const projectedExpense = screen.getByText(/240\.00/);
+    expect(projectedIncome).toHaveClass("text-ink-faint");
+    expect(projectedExpense).toHaveClass("text-ink-faint");
+
+    // ...while the actuals (from useSummary) stay in the primary tone.
+    const actualIncome = screen.getByText(/500\.00/);
+    const actualExpense = screen.getByText(/220\.00/);
+    expect(actualIncome).not.toHaveClass("text-ink-faint");
+    expect(actualExpense).not.toHaveClass("text-ink-faint");
+  });
+
+  it("still renders the projected figure when it equals the actual (nothing extra scheduled)", async () => {
+    mockEndpoints({
+      savings: SAVINGS,
+      safeToSpend: { ...SAFE_ENTRY, projected_income_minor: 50_000, projected_expense_minor: 22_000 },
+    });
+
+    renderCard();
+
+    await screen.findByText(/entrou/i);
+
+    // Even though projected === actual for both rows, the "(previsto …)"
+    // note must still render rather than being hidden as redundant.
+    expect(screen.getAllByText(/previsto/i)).toHaveLength(2);
+    // Two elements now render "500.00" (actual + projected income), and
+    // two render "220.00" (actual + projected expense).
+    expect(screen.getAllByText(/500\.00/)).toHaveLength(2);
+    expect(screen.getAllByText(/220\.00/)).toHaveLength(2);
   });
 
   it("shows a green, signed end-of-month projection reused from SafeToSpend when non-negative", async () => {
