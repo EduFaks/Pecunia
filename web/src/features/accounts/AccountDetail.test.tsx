@@ -215,6 +215,7 @@ describe("AccountDetail", () => {
               credit_limit_minor: 500000,
               bill_close_date: "2026-09-25",
               bill_due_date: "2026-10-15",
+              next_bill_due_date: "2026-10-15",
             },
           ],
         },

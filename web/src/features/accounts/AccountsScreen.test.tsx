@@ -247,6 +247,7 @@ describe("AccountsScreen", () => {
             credit_limit_minor: null,
             bill_close_date: null,
             bill_due_date: null,
+            next_bill_due_date: null,
           },
         ],
       },
