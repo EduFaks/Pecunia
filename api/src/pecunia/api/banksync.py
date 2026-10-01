@@ -25,7 +25,12 @@ from pecunia.api.deps import WorkspaceContext, require_initialized, require_work
 from pecunia.api.transactions import TransactionOut
 from pecunia.config import get_settings
 from pecunia.db import get_db
-from pecunia.services.banksync.provider import BankProvider, BankProviderError, PluggyProvider
+from pecunia.services.banksync.provider import (
+    BankItemNotFoundError,
+    BankProvider,
+    BankProviderError,
+    PluggyProvider,
+)
 from pecunia.services.banksync.sync import (
     AccountAlreadyLinkedError,
     BankSyncService,
@@ -71,7 +76,7 @@ class _NoProvider:
     mean one of those service methods started calling the provider without
     this module being updated to match."""
 
-    async def fetch_connections(self):
+    async def fetch_connection(self, item_id: str):
         raise NotImplementedError("this route's service methods must never call the provider")
 
     async def fetch_accounts(self, item_id: str):
@@ -183,17 +188,23 @@ async def _connection_out(
 
 @router.get("/discovery")
 async def get_discovery(
+    item_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
     provider: Annotated[BankProvider, Depends(get_bank_provider)],
-) -> list[DiscoveredConnectionOut]:
+) -> DiscoveredConnectionOut:
+    """Meu Pluggy's free tier has no client-wide item listing (403
+    LIST_ITEMS_FEATURE_NOT_ENABLED) — discovery is by item id, one item at a
+    time; the caller supplies the id they copied from the Pluggy dashboard."""
     svc = BankSyncService(db, provider)
     try:
-        result = await svc.discover(wsctx.workspace_id)
+        result = await svc.discover_item(wsctx.workspace_id, item_id)
+    except BankItemNotFoundError:
+        raise HTTPException(status_code=404, detail="PLUGGY_ITEM_NOT_FOUND") from None
     except BankProviderError as exc:
         logger.warning("Bank provider unavailable: %s", exc)
         raise HTTPException(status_code=503, detail="BANK_PROVIDER_UNAVAILABLE") from None
-    return [DiscoveredConnectionOut(**c) for c in result]
+    return DiscoveredConnectionOut(**result)
 
 
 @router.get("/connections")

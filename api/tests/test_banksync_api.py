@@ -64,15 +64,26 @@ def _provider_account(pluggy_account_id="acc-1", *, type="BANK", subtype="CHECKI
 
 
 async def test_discovery_requires_auth(client, initialized_instance):
-    resp = await client.get("/api/v1/bank-sync/discovery")
+    resp = await client.get("/api/v1/bank-sync/discovery", params={"item_id": "item-1"})
     assert resp.status_code == 401
+
+
+async def test_discovery_requires_item_id_query_param(client, app, initialized_instance):
+    """Meu Pluggy's free tier has no client-wide item listing — discovery is
+    by item id, and FastAPI's required-query validation 422s without it."""
+    h = await _auth(client)
+    _override(app)
+    resp = await client.get("/api/v1/bank-sync/discovery", headers=h)
+    assert resp.status_code == 422
 
 
 async def test_discovery_returns_503_without_credentials(client, initialized_instance):
     """No `get_bank_provider` override — default `Settings` has blank Pluggy
     credentials, so the dependency itself must 503 before any provider call."""
     h = await _auth(client)
-    resp = await client.get("/api/v1/bank-sync/discovery", headers=h)
+    resp = await client.get(
+        "/api/v1/bank-sync/discovery", params={"item_id": "item-1"}, headers=h
+    )
     assert resp.status_code == 503
     assert resp.json()["detail"] == "BANK_PROVIDER_UNAVAILABLE"
 
@@ -100,11 +111,11 @@ async def test_discovery_shape_and_linked_annotation(client, app, initialized_in
     )
     assert link_resp.status_code == 201, link_resp.text
 
-    resp = await client.get("/api/v1/bank-sync/discovery", headers=h)
+    resp = await client.get(
+        "/api/v1/bank-sync/discovery", params={"item_id": "item-1"}, headers=h
+    )
     assert resp.status_code == 200
-    body = resp.json()
-    assert len(body) == 1
-    connection = body[0]
+    connection = resp.json()
     assert connection["item_id"] == "item-1"
     assert connection["institution_name"] == "Bank"
     assert connection["status"] == "UPDATED"
@@ -114,10 +125,22 @@ async def test_discovery_shape_and_linked_annotation(client, app, initialized_in
     assert accounts_by_id["acc-1"]["currency"] == "BRL"
 
 
+async def test_discovery_item_not_found_returns_404(client, app, initialized_instance):
+    h = await _auth(client)
+    _override(app, connections=[])
+    resp = await client.get(
+        "/api/v1/bank-sync/discovery", params={"item_id": "item-missing"}, headers=h
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "PLUGGY_ITEM_NOT_FOUND"
+
+
 async def test_discovery_provider_error_returns_503(client, app, initialized_instance):
     h = await _auth(client)
     _override(app, raise_all=True)
-    resp = await client.get("/api/v1/bank-sync/discovery", headers=h)
+    resp = await client.get(
+        "/api/v1/bank-sync/discovery", params={"item_id": "item-1"}, headers=h
+    )
     assert resp.status_code == 503
     assert resp.json()["detail"] == "BANK_PROVIDER_UNAVAILABLE"
 
@@ -635,7 +658,15 @@ async def test_sync_imports_new_transactions_for_a_linked_account(client, app, i
     assert body["errors"] == []
 
 
-async def test_sync_provider_error_returns_503(client, app, initialized_instance):
+async def test_sync_total_provider_failure_is_captured_per_connection_not_503(
+    client, app, initialized_instance
+):
+    """Meu Pluggy's free tier has no client-wide item listing to fail
+    upfront — every provider call now happens inside sync_workspace's own
+    per-connection isolation, so even a total provider outage surfaces as a
+    200 summary with a populated errors list, not a 503 (503 is reserved for
+    a dependency-level block, e.g. missing credentials — see
+    test_sync_returns_503_without_credentials)."""
     h = await _auth(client)
     account = await _account(client, h, currency="BRL")
     _override(
@@ -653,8 +684,9 @@ async def test_sync_provider_error_returns_503(client, app, initialized_instance
     )
     _override(app, raise_all=True)
     resp = await client.post("/api/v1/bank-sync/sync", headers=h)
-    assert resp.status_code == 503
-    assert resp.json()["detail"] == "BANK_PROVIDER_UNAVAILABLE"
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["errors"]) == 1
 
 
 # --------------------------------------------------------------------------- #

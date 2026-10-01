@@ -35,7 +35,12 @@ from pecunia.models.bank_sync import (
 from pecunia.models.category import Category
 from pecunia.models.transaction import Transaction
 from pecunia.services.accounts import AccountService
-from pecunia.services.banksync.provider import BankProvider, BankProviderError, ProviderAccount
+from pecunia.services.banksync.provider import (
+    BankItemNotFoundError,
+    BankProvider,
+    BankProviderError,
+    ProviderAccount,
+)
 from pecunia.services.scoping import get_scoped, scoped_select
 from pecunia.services.transactions import (
     AccountNotFoundError,
@@ -102,7 +107,10 @@ class BankSyncService:
         self.db = db
         self.provider = provider
 
-    async def discover(self, workspace_id: uuid.UUID) -> list[dict]:
+    async def discover_item(self, workspace_id: uuid.UUID, item_id: str) -> dict:
+        """Discover a single Pluggy item by id (Meu Pluggy's free tier has no
+        client-wide item listing — `BankItemNotFoundError` propagates
+        uncaught here, the router maps it to 404 PLUGGY_ITEM_NOT_FOUND)."""
         links = (
             (await self.db.execute(scoped_select(BankAccountLink, workspace_id)))
             .scalars()
@@ -110,34 +118,29 @@ class BankSyncService:
         )
         linked_account_by_pluggy_id = {link.pluggy_account_id: link.account_id for link in links}
 
-        connections = await self.provider.fetch_connections()
-        result = []
-        for connection in connections:
-            provider_accounts = await self.provider.fetch_accounts(connection.item_id)
-            result.append(
+        connection = await self.provider.fetch_connection(item_id)
+        provider_accounts = await self.provider.fetch_accounts(connection.item_id)
+        return {
+            "item_id": connection.item_id,
+            "institution_name": connection.institution_name,
+            "status": connection.status,
+            "accounts": [
                 {
-                    "item_id": connection.item_id,
-                    "institution_name": connection.institution_name,
-                    "status": connection.status,
-                    "accounts": [
-                        {
-                            "pluggy_account_id": acc.pluggy_account_id,
-                            "type": acc.type,
-                            "subtype": acc.subtype,
-                            "name": acc.name,
-                            "number": acc.number,
-                            "balance_minor": acc.balance_minor,
-                            "currency": acc.currency,
-                            "credit_limit_minor": acc.credit_limit_minor,
-                            "bill_close_date": acc.bill_close_date,
-                            "bill_due_date": acc.bill_due_date,
-                            "linked_account_id": linked_account_by_pluggy_id.get(acc.pluggy_account_id),
-                        }
-                        for acc in provider_accounts
-                    ],
+                    "pluggy_account_id": acc.pluggy_account_id,
+                    "type": acc.type,
+                    "subtype": acc.subtype,
+                    "name": acc.name,
+                    "number": acc.number,
+                    "balance_minor": acc.balance_minor,
+                    "currency": acc.currency,
+                    "credit_limit_minor": acc.credit_limit_minor,
+                    "bill_close_date": acc.bill_close_date,
+                    "bill_due_date": acc.bill_due_date,
+                    "linked_account_id": linked_account_by_pluggy_id.get(acc.pluggy_account_id),
                 }
-            )
-        return result
+                for acc in provider_accounts
+            ],
+        }
 
     async def link_account(
         self,
@@ -152,11 +155,14 @@ class BankSyncService:
     ) -> BankAccountLink:
         # 1. Resolve the provider's view of this item/account. Either side
         # missing means the caller named something the provider doesn't (or
-        # no longer) know about.
-        connections = await self.provider.fetch_connections()
-        connection_data = next((c for c in connections if c.item_id == pluggy_item_id), None)
-        if connection_data is None:
-            raise PluggyAccountNotFoundError()
+        # no longer) know about — a BankItemNotFoundError here is just that,
+        # translated to this method's own not-found contract rather than
+        # propagating the provider-shaped exception (discover_item, by
+        # contrast, lets it propagate — see that method's docstring).
+        try:
+            connection_data = await self.provider.fetch_connection(pluggy_item_id)
+        except BankItemNotFoundError:
+            raise PluggyAccountNotFoundError() from None
         provider_accounts = await self.provider.fetch_accounts(pluggy_item_id)
         provider_account = next(
             (a for a in provider_accounts if a.pluggy_account_id == pluggy_account_id), None
@@ -301,9 +307,6 @@ class BankSyncService:
         return link
 
     async def sync_workspace(self, workspace_id: uuid.UUID, *, today: date) -> dict:
-        connections_data = await self.provider.fetch_connections()
-        status_by_item = {c.item_id: c.status for c in connections_data}
-
         stored_connections = (
             (await self.db.execute(scoped_select(BankConnection, workspace_id)))
             .scalars()
@@ -315,6 +318,21 @@ class BankSyncService:
 
         for connection in stored_connections:
             try:
+                try:
+                    connection_data = await self.provider.fetch_connection(
+                        connection.pluggy_item_id
+                    )
+                    item_status: str | None = connection_data.status
+                except BankItemNotFoundError:
+                    # The item vanished from the provider entirely (e.g. the
+                    # user removed it directly in Pluggy) — distinct from any
+                    # known status string (finding 10). Not a generic outage:
+                    # handled inline here (item_status stays a sentinel for
+                    # the branch below), not by the outer except, so the
+                    # per-link import still runs and this still counts as a
+                    # completed (not failed) sync round.
+                    item_status = None
+
                 provider_accounts = await self.provider.fetch_accounts(connection.pluggy_item_id)
                 provider_accounts_by_id = {a.pluggy_account_id: a for a in provider_accounts}
 
@@ -376,7 +394,6 @@ class BankSyncService:
                         link.bill_due_date = provider_account.bill_due_date
                 errors.extend(link_errors)
 
-                item_status = status_by_item.get(connection.pluggy_item_id)
                 if link_errors:
                     # A failed link overrides whatever the item status would
                     # otherwise have implied — a healthy Pluggy connection
