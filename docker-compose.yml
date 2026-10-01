@@ -21,6 +21,14 @@ services:
     depends_on:
       pecunia-db:
         condition: service_healthy
+    # Resolve DNS against public resolvers directly instead of the host's
+    # resolver. The API makes the only outbound calls (api.pluggy.ai); on a
+    # host whose systemd-resolved stub is flaky, the container would otherwise
+    # inherit that flakiness and fail bank sync with EAI_AGAIN. Overridable
+    # via PECUNIA_DNS (space/comma-separated) if a deployment needs its own.
+    dns:
+      - ${PECUNIA_DNS_1:-1.1.1.1}
+      - ${PECUNIA_DNS_2:-8.8.8.8}
     environment:
       PECUNIA_DATABASE_URL: postgresql+asyncpg://${PECUNIA_DB_USER:-pecunia}:${PECUNIA_DB_PASSWORD:-pecunia}@pecunia-db:5432/${PECUNIA_DB_NAME:-pecunia}
       PECUNIA_SECRET_KEY: ${PECUNIA_SECRET_KEY:-}
