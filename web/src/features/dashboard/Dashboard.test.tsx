@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
+import { qk } from "../../lib/queries";
 import Dashboard from "./Dashboard";
 
 vi.mock("../../lib/api", async (importOriginal) => {
@@ -24,7 +25,7 @@ function renderDashboard() {
   // `retry: false` so an intentionally-erroring accounts fetch fails fast
   // instead of TanStack Query's default backoff.
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
@@ -34,6 +35,9 @@ function renderDashboard() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  // Exposed so pull-to-refresh tests can spy on the real client the
+  // component reads via `useQueryClient()`, rather than reconstructing one.
+  return { ...utils, queryClient };
 }
 
 function mockEndpoints(overrides: {
@@ -200,5 +204,43 @@ describe("Dashboard", () => {
     expect(screen.queryByRole("heading", { name: "Accounts" })).not.toBeInTheDocument();
     // "Upcoming" (the old 30-day widget) must not appear — only "Next 14 days" should.
     expect(screen.queryByRole("heading", { name: "Upcoming" })).not.toBeInTheDocument();
+  });
+
+  describe("pull-to-refresh", () => {
+    it("invalidates analytics, the dashboard accounts read, and bank-sync when pulled past the threshold", async () => {
+      mockEndpoints({ accounts: ONE_ACCOUNT, connections: [] });
+
+      const { queryClient } = renderDashboard();
+      await screen.findAllByRole("heading", { level: 2 });
+
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const container = screen.getByTestId("dashboard-scroll");
+
+      fireEvent.touchStart(container, { touches: [{ clientY: 0 }] });
+      fireEvent.touchMove(container, { touches: [{ clientY: 100 }] });
+      fireEvent.touchEnd(container, { changedTouches: [{ clientY: 100 }] });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["analytics"] });
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: [...qk.accounts, "dashboard"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: qk.bankSync });
+    });
+
+    it("does not refresh when the pull stays under the threshold", async () => {
+      mockEndpoints({ accounts: ONE_ACCOUNT, connections: [] });
+
+      const { queryClient } = renderDashboard();
+      await screen.findAllByRole("heading", { level: 2 });
+
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const container = screen.getByTestId("dashboard-scroll");
+
+      fireEvent.touchStart(container, { touches: [{ clientY: 0 }] });
+      fireEvent.touchMove(container, { touches: [{ clientY: 20 }] });
+      fireEvent.touchEnd(container, { changedTouches: [{ clientY: 20 }] });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
   });
 });

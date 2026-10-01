@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import EmptyState from "../../components/data/EmptyState";
 import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
 import Spinner from "../../components/ui/Spinner";
+import { usePullToRefresh } from "../../components/layout/usePullToRefresh";
 import { apiFetch } from "../../lib/api";
 import { qk } from "../../lib/queries";
 import AccountsCardsCard from "./AccountsCardsCard";
@@ -46,6 +47,26 @@ const ACCOUNTS_FETCH_LIMIT = 200;
  */
 function Dashboard() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  // A phone-native pull-to-refresh for the card stack below: releasing a
+  // pull past the threshold re-fetches everything the five cards read —
+  // `["analytics"]` (SafeToSpendCard/MonthResultCard/SpendingBreakdownCard/
+  // UpcomingCard all read `/analytics/*`), this screen's own `"dashboard"`-
+  // suffixed accounts read (also `AccountsCardsCard`'s), and `qk.bankSync`
+  // (the connections `AccountsCardsCard` joins balances against) — the same
+  // three prefixes a bank-sync mutation invalidates (`useBankSync.ts`), just
+  // triggered by a gesture instead of a mutation's `onSuccess`. Scoped to
+  // this screen only — no other screen mounts `usePullToRefresh`.
+  const { bind, refreshing } = usePullToRefresh({
+    onRefresh: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["analytics"] }),
+        queryClient.invalidateQueries({ queryKey: [...qk.accounts, "dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: qk.bankSync }),
+      ]);
+    },
+  });
 
   // Suffixed `"dashboard"` — same move `AssetDetail`'s bounded chart fetch
   // already makes on `qk.assetValuations(id)` (see that file's docstring) —
@@ -92,7 +113,12 @@ function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6" data-testid="dashboard-scroll" {...bind}>
+      {refreshing ? (
+        <div className="flex justify-center py-2">
+          <Spinner label="Refreshing" size="sm" className="text-ink-2" />
+        </div>
+      ) : null}
       <div className="min-w-0">
         <SafeToSpendCard />
       </div>

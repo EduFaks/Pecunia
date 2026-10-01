@@ -594,7 +594,11 @@ describe("InsightsScreen", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "Insights" }));
+    // `TabBar` (Task 7, AppShell.tsx) also renders an "Insights" tab below
+    // `md`, so this scopes to the sidebar landmark specifically — this test
+    // is about the sidebar nav entry, per its name.
+    const sidebar = within(screen.getByRole("navigation", { name: "Sidebar" }));
+    fireEvent.click(sidebar.getByRole("link", { name: "Insights" }));
 
     expect(await screen.findByRole("heading", { name: "Insights" })).toBeInTheDocument();
     expect(await screen.findByRole("list", { name: /spending by contact/i })).toBeInTheDocument();
