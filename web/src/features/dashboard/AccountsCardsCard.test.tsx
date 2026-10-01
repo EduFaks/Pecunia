@@ -76,6 +76,7 @@ const CONNECTIONS = [
         credit_limit_minor: 500_000,
         bill_close_date: "2026-10-10",
         bill_due_date: "2026-10-17",
+        next_bill_due_date: "2026-10-17",
       },
       {
         id: "l4",
@@ -90,6 +91,7 @@ const CONNECTIONS = [
         credit_limit_minor: null,
         bill_close_date: null,
         bill_due_date: null,
+        next_bill_due_date: null,
       },
     ],
   },
@@ -152,6 +154,56 @@ describe("AccountsCardsCard", () => {
 
     // Balance still renders alongside the bar.
     expect(within(row).getByText(/1,250\.00/)).toBeInTheDocument();
+  });
+
+  it("shows the rolled next_bill_due_date instead of a past raw bill_due_date", async () => {
+    mockFixture({
+      connections: [
+        {
+          ...CONNECTIONS[0],
+          links: [
+            {
+              ...CONNECTIONS[0].links[0],
+              bill_due_date: "2020-01-05",
+              next_bill_due_date: "2026-12-25",
+            },
+            CONNECTIONS[0].links[1],
+          ],
+        },
+      ],
+    });
+    renderCard();
+
+    await screen.findByText("Nubank");
+    const row = rowFor("Nubank");
+
+    expect(within(row).getByText(/vence/i)).toBeInTheDocument();
+    expect(within(row).getByText(/12\/25\/2026/)).toBeInTheDocument();
+    expect(within(row).queryByText(/01\/05\/2020/)).not.toBeInTheDocument();
+  });
+
+  it("shows no due line when next_bill_due_date is null, even with a raw bill_due_date", async () => {
+    mockFixture({
+      connections: [
+        {
+          ...CONNECTIONS[0],
+          links: [
+            {
+              ...CONNECTIONS[0].links[0],
+              bill_due_date: "2026-10-17",
+              next_bill_due_date: null,
+            },
+            CONNECTIONS[0].links[1],
+          ],
+        },
+      ],
+    });
+    renderCard();
+
+    await screen.findByText("Nubank");
+    const row = rowFor("Nubank");
+
+    expect(within(row).queryByText(/vence/i)).not.toBeInTheDocument();
   });
 
   it("renders a plain balance with no chip and no bar for an unlinked account", async () => {

@@ -26,6 +26,7 @@ const BANK_LINK_1: BankLinkOut = {
   credit_limit_minor: null,
   bill_close_date: null,
   bill_due_date: null,
+  next_bill_due_date: null,
 };
 
 const BANK_LINK_2: BankLinkOut = {
@@ -41,6 +42,7 @@ const BANK_LINK_2: BankLinkOut = {
   credit_limit_minor: null,
   bill_close_date: null,
   bill_due_date: null,
+  next_bill_due_date: null,
 };
 
 const CONNECTION: BankConnectionOut = {

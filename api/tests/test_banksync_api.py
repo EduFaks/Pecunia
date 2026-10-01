@@ -50,11 +50,13 @@ def _override(app, **kwargs):
 
 
 def _provider_account(pluggy_account_id="acc-1", *, type="BANK", subtype="CHECKING_ACCOUNT",
-                       name="Checking", balance_minor=0, currency="BRL"):
+                       name="Checking", balance_minor=0, currency="BRL",
+                       credit_limit_minor=None, bill_close_date=None, bill_due_date=None):
     return ProviderAccount(
         pluggy_account_id=pluggy_account_id, item_id="item-1", type=type, subtype=subtype,
         name=name, number="0001", balance_minor=balance_minor, currency=currency,
-        credit_limit_minor=None, bill_close_date=None, bill_due_date=None,
+        credit_limit_minor=credit_limit_minor, bill_close_date=bill_close_date,
+        bill_due_date=bill_due_date,
     )
 
 
@@ -433,6 +435,42 @@ async def test_list_connections_shows_linked_account(client, app, initialized_in
     body = resp.json()
     assert len(body) == 1
     assert body[0]["links"][0]["account_id"] == account["id"]
+
+
+async def test_list_connections_rolls_past_bill_due_date_forward(client, app, initialized_instance):
+    """Pluggy reports a credit card's `bill_due_date` as the last CLOSED
+    bill's due date — always in the past. `next_bill_due_date` rolls that
+    day-of-month forward to its next (future-or-today) occurrence."""
+    h = await _auth(client)
+    account = await _account(client, h, currency="BRL", name="Card", type="credit_card")
+    past_due_date = date(2026, 1, 11)
+    _override(
+        app,
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={
+            "item-1": [
+                _provider_account(
+                    type="CREDIT", subtype="CREDIT_CARD", currency="BRL",
+                    bill_due_date=past_due_date,
+                )
+            ]
+        },
+    )
+    await client.post(
+        "/api/v1/bank-sync/links",
+        json={
+            "pluggy_item_id": "item-1", "pluggy_account_id": "acc-1",
+            "sync_from": "2026-01-01", "account_id": account["id"],
+        },
+        headers=h,
+    )
+    resp = await client.get("/api/v1/bank-sync/connections", headers=h)
+    assert resp.status_code == 200
+    link = resp.json()[0]["links"][0]
+    assert link["bill_due_date"] == past_due_date.isoformat()
+    next_due = date.fromisoformat(link["next_bill_due_date"])
+    assert next_due >= datetime.now(UTC).date()
+    assert next_due.day == past_due_date.day
 
 
 async def test_delete_connection_requires_auth(client, initialized_instance):

@@ -24,10 +24,24 @@ export interface SafeToSpend {
   limited_by: "income" | "budget";
   expected_income_minor: number;
   committed_remaining_minor: number;
+  /** The portion of `committed_remaining_minor` that's an upcoming credit-card
+   * bill (folded in without double-counting the card's own MTD spend) —
+   * `SafeToSpendCard`'s "inclui fatura de cartão" sub-note, shown only when
+   * this is `> 0`. */
+  committed_cards_minor: number;
+  /** The rest of `committed_remaining_minor` — everything upcoming that
+   * isn't a credit-card bill (e.g. scheduled transfers/bills on other
+   * accounts). Not separately surfaced in the card today. */
+  committed_other_minor: number;
   spent_mtd_minor: number;
   monthly_budget_minor: number | null;
   days_remaining: number;
   daily_allowance_minor: number;
+  /** End-of-month projected totals (income/expense), independent of the
+   * optional monthly budget — surfaced on `MonthResultCard`, not
+   * `SafeToSpendCard` itself. */
+  projected_income_minor: number;
+  projected_expense_minor: number;
 }
 
 /**

@@ -25,6 +25,7 @@ from pecunia.api.deps import WorkspaceContext, require_initialized, require_work
 from pecunia.api.transactions import TransactionOut
 from pecunia.config import get_settings
 from pecunia.db import get_db
+from pecunia.period import next_due_on_or_after
 from pecunia.services.banksync.provider import (
     BankItemNotFoundError,
     BankProvider,
@@ -105,6 +106,7 @@ class BankLinkOut(BaseModel):
     credit_limit_minor: int | None
     bill_close_date: date | None
     bill_due_date: date | None
+    next_bill_due_date: date | None
 
 
 class BankConnectionOut(BaseModel):
@@ -175,10 +177,27 @@ class MappingsIn(BaseModel):
     mappings: list[CategoryMappingIn]
 
 
+def _roll_bill_due_dates(connections: list[dict]) -> list[dict]:
+    """Router-level roll (finding: `list_connections` itself stays
+    clock-free). Pluggy reports a credit card's `bill_due_date` as the last
+    CLOSED bill's due date — always a past date — so each link dict gets a
+    `next_bill_due_date` rolled forward to its next on-or-after-today
+    occurrence, `None` when the link has no `bill_due_date` at all."""
+    today = datetime.now(UTC).date()
+    for connection in connections:
+        for link in connection["links"]:
+            link["next_bill_due_date"] = (
+                next_due_on_or_after(link["bill_due_date"], today)
+                if link["bill_due_date"]
+                else None
+            )
+    return connections
+
+
 async def _connection_out(
     svc: BankSyncService, workspace_id: uuid.UUID, connection_id: uuid.UUID
 ) -> BankConnectionOut:
-    connections = await svc.list_connections(workspace_id)
+    connections = _roll_bill_due_dates(await svc.list_connections(workspace_id))
     connection = next(c for c in connections if c["id"] == connection_id)
     return BankConnectionOut(**connection)
 
@@ -213,7 +232,7 @@ async def list_bank_connections(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
 ) -> list[BankConnectionOut]:
     svc = BankSyncService(db, _NO_PROVIDER)
-    connections = await svc.list_connections(wsctx.workspace_id)
+    connections = _roll_bill_due_dates(await svc.list_connections(wsctx.workspace_id))
     return [BankConnectionOut(**c) for c in connections]
 
 

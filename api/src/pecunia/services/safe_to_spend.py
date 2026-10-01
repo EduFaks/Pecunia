@@ -1,10 +1,19 @@
 import uuid
 from datetime import date
 
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pecunia.models import InstanceState, Loan, ScheduledTransaction, Subscription
-from pecunia.period import current_window
+from pecunia.models import (
+    Account,
+    BankAccountLink,
+    InstanceState,
+    Loan,
+    ScheduledTransaction,
+    Subscription,
+    Transaction,
+)
+from pecunia.period import current_window, next_due_on_or_after
 from pecunia.services.analytics import AnalyticsService
 from pecunia.services.recurrence import expand_occurrences
 from pecunia.services.scoping import scoped_select
@@ -32,6 +41,18 @@ class SafeToSpendService:
     sums (`expand_occurrences` can return `today` itself) — anything due today
     or earlier is presumed already reflected in `spent_mtd`, so including it
     again would double-count it.
+
+    `committed_remaining` also folds in each linked credit card's upcoming
+    bill (`committed_cards`, kept separately from `committed_other` — the
+    pre-card subscriptions/loans/scheduled-expense total — so the split can
+    be reported). For a card whose rolled-forward due date
+    (`next_due_on_or_after(link.bill_due_date, today)`) falls strictly after
+    `today` and on/before `month_end`, the owed balance
+    (`abs(link.provider_balance_minor)`) minus this month's card spend so far
+    is the bill still coming — `card_bill = max(0, owed - card_spend_mtd)`.
+    This month's card purchases already sit in `spent_mtd` (via `cashflow`),
+    so subtracting `card_spend_mtd` here keeps them from being counted twice;
+    only the prior-cycle debt actually due this month is added.
 
     An optional monthly budget (`instance_state.settings["monthly_budget_minor"]`)
     applies ONLY to the base currency (`instance_state.settings["base_currency"]`,
@@ -119,6 +140,53 @@ class SafeToSpendService:
             if remaining:
                 add(committed_remaining, loan.currency, loan.planned_payment_minor * len(remaining))
 
+        # The pre-card committed total, kept aside so the split against
+        # committed_cards can be reported below.
+        committed_other = dict(committed_remaining)
+
+        committed_cards: dict[str, int] = {}
+        card_links = (
+            await self.db.execute(
+                scoped_select(BankAccountLink, workspace_id)
+                .join(Account, Account.id == BankAccountLink.account_id)
+                .where(
+                    Account.type == "credit_card",
+                    BankAccountLink.provider_balance_minor.is_not(None),
+                    BankAccountLink.bill_due_date.is_not(None),
+                )
+                .add_columns(Account.currency)
+            )
+        ).all()
+        for link, currency in card_links:
+            next_due = next_due_on_or_after(link.bill_due_date, today)
+            if not (today < next_due <= month_end):
+                continue
+            owed = abs(link.provider_balance_minor)
+            card_spend_mtd = await self.db.scalar(
+                sa.select(
+                    sa.func.coalesce(sa.func.sum(-Transaction.amount_minor), 0)
+                ).where(
+                    # Defense-in-depth: link.account_id is already workspace-scoped
+                    # via the scoped_select join above, but this keeps the
+                    # aggregate correct on its own if that ever changes.
+                    Transaction.workspace_id == workspace_id,
+                    Transaction.account_id == link.account_id,
+                    Transaction.amount_minor < 0,
+                    # Mirrors AnalyticsService.cashflow's own transfer exclusion —
+                    # a transfer-out leg on the card isn't a purchase, so it must
+                    # not reduce the bill the same way spent_mtd never counts it.
+                    Transaction.transfer_id.is_(None),
+                    Transaction.occurred_on >= month_start,
+                    Transaction.occurred_on <= today,
+                    Transaction.deleted_at.is_(None),
+                )
+            )
+            card_bill = max(0, owed - card_spend_mtd)
+            add(committed_cards, currency, card_bill)
+
+        for currency, amount in committed_cards.items():
+            add(committed_remaining, currency, amount)
+
         state = await self.db.get(InstanceState, 1)
         settings = (state.settings if state else None) or {}
         base_currency = settings.get("base_currency", _DEFAULT_BASE_CURRENCY)
@@ -139,6 +207,8 @@ class SafeToSpendService:
             spent = spent_mtd.get(currency, 0)
             expected_income = income_mtd.get(currency, 0) + scheduled_income_remaining.get(currency, 0)
             committed = committed_remaining.get(currency, 0)
+            cards = committed_cards.get(currency, 0)
+            other = committed_other.get(currency, 0)
             safe = expected_income - committed - spent
 
             budget = monthly_budget_minor if currency == base_currency else None
@@ -157,9 +227,13 @@ class SafeToSpendService:
                 "limited_by": limited_by,
                 "expected_income_minor": expected_income,
                 "committed_remaining_minor": committed,
+                "committed_cards_minor": cards,
+                "committed_other_minor": other,
                 "spent_mtd_minor": spent,
                 "monthly_budget_minor": budget,
                 "days_remaining": days_remaining,
                 "daily_allowance_minor": max(0, displayed) // days_remaining,
+                "projected_income_minor": expected_income,
+                "projected_expense_minor": spent + committed,
             }
         return result

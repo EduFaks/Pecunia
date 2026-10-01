@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
-import SpendingBreakdownCard, { cashflowDeltaPct } from "./SpendingBreakdownCard";
+import SpendingBreakdownCard, { cashflowDeltaPct, currentMonthRange } from "./SpendingBreakdownCard";
 
 vi.mock("../../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/api")>();
@@ -58,6 +58,33 @@ function renderCard() {
 }
 
 describe("SpendingBreakdownCard", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("requests spending-by-category scoped to the current calendar month, not the bare 12-month default", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 9, 15, 12, 0, 0)); // Oct 15, 2026 (local) — month is 0-indexed
+    mockEndpoints({
+      categories: CATEGORIES,
+      cashflow: [
+        { period_start: "2026-08-01", income_minor: 0, spend_minor: 20_000 },
+        { period_start: "2026-09-01", income_minor: 0, spend_minor: 40_000 },
+      ],
+    });
+
+    renderCard();
+
+    await screen.findByRole("img", { name: /spending by category/i });
+
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/analytics/spending-by-category?from=2026-10-01&to=2026-10-15",
+    );
+    expect(mockApiFetch).not.toHaveBeenCalledWith("/analytics/spending-by-category");
+    // vs-last-month delta still comes from the UNRANGED cashflow query.
+    expect(mockApiFetch).toHaveBeenCalledWith("/analytics/cashflow");
+  });
+
   it("renders the category donut and the month total", async () => {
     mockEndpoints({
       categories: CATEGORIES,
@@ -128,7 +155,7 @@ describe("SpendingBreakdownCard", () => {
 
     renderCard();
 
-    expect(await screen.findByText(/nenhum gasto/i)).toBeInTheDocument();
+    expect(await screen.findByText(/sem gastos neste mês/i)).toBeInTheDocument();
   });
 
   it("shows an error state when a query fails", async () => {
@@ -154,5 +181,22 @@ describe("cashflowDeltaPct", () => {
   it("returns null (not NaN/Infinity) when the previous period is zero", () => {
     expect(cashflowDeltaPct(5_000, 0)).toBeNull();
     expect(cashflowDeltaPct(0, 0)).toBeNull();
+  });
+});
+
+describe("currentMonthRange", () => {
+  it("spans from the 1st of the month to the given day, using LOCAL date math", () => {
+    const range = currentMonthRange(new Date(2026, 9, 15)); // Oct 15, 2026 (local)
+    expect(range).toEqual({ from: "2026-10-01", to: "2026-10-15" });
+  });
+
+  it("is a single day on the 1st of the month", () => {
+    const range = currentMonthRange(new Date(2026, 9, 1));
+    expect(range).toEqual({ from: "2026-10-01", to: "2026-10-01" });
+  });
+
+  it("rolls the year forward correctly in December/January", () => {
+    const range = currentMonthRange(new Date(2026, 11, 31)); // Dec 31, 2026 (local)
+    expect(range).toEqual({ from: "2026-12-01", to: "2026-12-31" });
   });
 });

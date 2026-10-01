@@ -32,6 +32,7 @@ export interface BankLinkOut {
   credit_limit_minor: number | null;
   bill_close_date: string | null;
   bill_due_date: string | null;
+  next_bill_due_date: string | null;
 }
 
 /** Mirrors `BankConnectionOut`. Represents a single connection to a bank

@@ -121,9 +121,9 @@ function AccountsCardsCard() {
                   </div>
                 ) : null}
 
-                {link?.bill_due_date && account.type === "credit_card" ? (
+                {link?.next_bill_due_date && account.type === "credit_card" ? (
                   <p className="text-xs text-ink-faint">
-                    vence <DateText iso={link.bill_due_date} />
+                    vence <DateText iso={link.next_bill_due_date} />
                   </p>
                 ) : null}
               </li>

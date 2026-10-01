@@ -5,6 +5,8 @@ import sqlalchemy as sa
 
 from pecunia.models import (
     Account,
+    BankAccountLink,
+    BankConnection,
     Loan,
     ScheduledTransaction,
     Subscription,
@@ -13,6 +15,7 @@ from pecunia.models import (
 )
 from pecunia.services.safe_to_spend import SafeToSpendService
 from pecunia.services.settings import set_monthly_budget
+from pecunia.services.transfers import TransferService
 
 TODAY = date(2026, 9, 13)  # mid-month; Sept 2026 has 30 days
 
@@ -86,6 +89,38 @@ async def _loan(
     db.add(loan)
     await db.flush()
     return loan
+
+
+async def _card_account(db, ws_id, *, currency="BRL", name="Card"):
+    acc = Account(
+        id=uuid.uuid4(), workspace_id=ws_id, name=name, type="credit_card",
+        currency=currency, initial_balance_minor=0,
+    )
+    db.add(acc)
+    await db.flush()
+    return acc
+
+
+async def _card_link(
+    db, ws_id, account, *, provider_balance_minor, bill_due_date,
+    pluggy_item_id="item-card", pluggy_account_id="acc-card",
+):
+    connection = BankConnection(
+        id=uuid.uuid4(), workspace_id=ws_id, pluggy_item_id=pluggy_item_id,
+        institution_name="Bank", status="ok",
+    )
+    db.add(connection)
+    await db.flush()
+    link = BankAccountLink(
+        id=uuid.uuid4(), workspace_id=ws_id, connection_id=connection.id,
+        account_id=account.id, pluggy_account_id=pluggy_account_id,
+        sync_from=date(2026, 1, 1),
+        provider_balance_minor=provider_balance_minor,
+        bill_due_date=bill_due_date,
+    )
+    db.add(link)
+    await db.flush()
+    return link
 
 
 async def test_safe_to_spend_core_formula(db, initialized_instance):
@@ -202,3 +237,185 @@ async def test_base_currency_always_present_when_empty(db, initialized_instance)
     assert out["BRL"]["displayed_safe_minor"] == 0
     assert out["BRL"]["daily_allowance_minor"] == 0
     assert out["BRL"]["days_remaining"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# Task 2: credit-card bills fold into committed_remaining (no double-count)
+# --------------------------------------------------------------------------- #
+
+
+async def test_card_due_this_month_counts_as_committed(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="BRL")
+    # bill_due_date day-of-month 20 -> next_due_on_or_after(.., TODAY=Sep 13)
+    # rolls forward to Sep 20, which is inside (today, month_end].
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    assert brl["committed_cards_minor"] == 1_300_000
+    assert brl["committed_other_minor"] == 0
+    assert brl["committed_remaining_minor"] == 1_300_000
+    assert brl["expected_income_minor"] == 0
+    assert brl["safe_minor"] == -1_300_000
+
+
+async def test_card_bill_excludes_this_months_card_spend_no_double_count(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="BRL")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+    # A R$200,00 expense on the card this month, on/before today.
+    await _tx(db, ws_id, card, amount=-20_000, on=date(2026, 9, 10))
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    assert brl["committed_cards_minor"] == 1_300_000 - 20_000
+    # The card expense is also counted once in spent_mtd (not double-counted
+    # again via committed_cards).
+    assert brl["spent_mtd_minor"] == 20_000
+
+
+async def test_card_bill_excludes_transfer_legs_from_card_spend(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="BRL")
+    savings = await _account(db, ws_id, currency="BRL", name="Savings")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+    # A real R$200,00 expense on the card this month (transfer_id NULL) —
+    # this one should reduce the card bill, same as spent_mtd counts it.
+    await _tx(db, ws_id, card, amount=-20_000, on=date(2026, 9, 10))
+    # A R$500,00 transfer OUT of the card this month (e.g. paying the card
+    # from itself into another account) — its card-side leg carries a
+    # non-null transfer_id, so cashflow/spent_mtd excludes it. card_spend_mtd
+    # must exclude it too, or the card bill gets over-subtracted.
+    await TransferService(db).create(
+        ws_id,
+        from_account_id=card.id,
+        to_account_id=savings.id,
+        amount_minor=50_000,
+        currency="BRL",
+        description="Card payment",
+        occurred_on=date(2026, 9, 12),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    # Only the real expense (-20_000) should count as card_spend_mtd; the
+    # transfer leg (-50_000) must NOT reduce the bill. Without the fix this
+    # would be 1_300_000 - 70_000 = 1_230_000.
+    assert brl["committed_cards_minor"] == 1_300_000 - 20_000
+    # And spent_mtd must likewise exclude the transfer leg.
+    assert brl["spent_mtd_minor"] == 20_000
+
+
+async def test_card_due_next_month_excluded(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="BRL")
+    # bill_due_date day-of-month 5 -> next_due_on_or_after(.., TODAY=Sep 13)
+    # rolls forward to Oct 5, which is after month_end (Sep 30).
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 5),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    assert brl["committed_cards_minor"] == 0
+    assert brl["committed_remaining_minor"] == 0
+
+
+async def test_card_paid_down_clamps_to_zero(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="BRL")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+    # This month's card spend already exceeds the owed balance.
+    await _tx(db, ws_id, card, amount=-1_500_000, on=date(2026, 9, 10))
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    assert brl["committed_cards_minor"] == 0
+
+
+async def test_committed_cards_plus_other_equals_committed_remaining(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _subscription(
+        db, ws_id, name="Netflix", amount=20_000, next_renewal=date(2026, 9, 25),
+    )
+    card = await _card_account(db, ws_id, currency="BRL")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    assert brl["committed_cards_minor"] == 1_300_000
+    assert brl["committed_other_minor"] == 20_000
+    assert brl["committed_cards_minor"] + brl["committed_other_minor"] == brl["committed_remaining_minor"]
+
+
+async def test_projected_income_and_expense_identities(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="BRL")
+    await _tx(db, ws_id, acc, amount=300_000, on=date(2026, 9, 5))
+    await _tx(db, ws_id, acc, amount=-100_000, on=date(2026, 9, 10))
+    await _scheduled(
+        db, ws_id, acc, description="Bonus", amount=50_000, next_due=date(2026, 9, 20),
+    )
+    await _subscription(
+        db, ws_id, name="Netflix", amount=20_000, next_renewal=date(2026, 9, 25),
+    )
+    card = await _card_account(db, ws_id, currency="BRL")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-1_300_000, bill_due_date=date(2026, 8, 20),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    brl = out["BRL"]
+    assert brl["projected_income_minor"] == brl["expected_income_minor"]
+    assert brl["projected_expense_minor"] == brl["spent_mtd_minor"] + brl["committed_remaining_minor"]
+
+
+async def test_card_in_non_base_currency_contributes_to_its_own_currency_only(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="USD")
+    await _card_link(
+        db, ws_id, card,
+        provider_balance_minor=-50_000, bill_due_date=date(2026, 8, 20),
+    )
+
+    svc = SafeToSpendService(db)
+    out = await svc.compute(ws_id, today=TODAY)
+
+    assert out["USD"]["committed_cards_minor"] == 50_000
+    assert out["USD"]["committed_remaining_minor"] == 50_000
+    # BRL is still the always-present base currency, untouched by the USD card.
+    assert out["BRL"]["committed_cards_minor"] == 0
+    assert out["BRL"]["committed_other_minor"] == 0
+    assert out["BRL"]["committed_remaining_minor"] == 0

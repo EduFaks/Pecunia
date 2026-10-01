@@ -170,10 +170,14 @@ class SafeToSpendOut(BaseModel):
     limited_by: Literal["income", "budget"]
     expected_income_minor: int
     committed_remaining_minor: int
+    committed_cards_minor: int
+    committed_other_minor: int
     spent_mtd_minor: int
     monthly_budget_minor: int | None
     days_remaining: int
     daily_allowance_minor: int
+    projected_income_minor: int
+    projected_expense_minor: int
 
 
 @router.get("/cashflow")
