@@ -184,6 +184,21 @@ async def test_fetch_connection_404_raises_bank_item_not_found_error():
         await provider.fetch_connection("missing-item")
 
 
+async def test_fetch_connection_400_invalid_id_raises_bank_item_not_found_error():
+    """Pluggy answers 400 ("Invalid id, not an uuid" — verified live) when the
+    caller-supplied item id is malformed; from the user's perspective that is
+    the same "no such item" case as a 404, not a provider outage."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(400, json={"message": "Invalid id, not an uuid"})
+
+    provider = _provider(handler)
+    with pytest.raises(BankItemNotFoundError):
+        await provider.fetch_connection("not-a-uuid")
+
+
 async def test_fetch_connection_non_404_error_raises_plain_bank_provider_error_not_item_not_found():
     """Any other failure (500, timeout, etc) must stay a plain
     BankProviderError, not the 404-specific subclass — only a clean 404 is

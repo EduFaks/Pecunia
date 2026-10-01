@@ -172,12 +172,16 @@ class PluggyProvider:
                 self._api_key = None
                 await self._auth()
                 response = await self._request(path, params)
-            if not_found_error is not None and response.status_code == 404:
-                # A clean 404 on an endpoint keyed by a caller-supplied id
-                # (e.g. /items/{id}) means "that id doesn't exist", not a
-                # provider outage — raise the caller's distinct subclass
-                # instead of falling through to the generic error below.
-                logger.warning("Pluggy request to %s returned 404", path)
+            if not_found_error is not None and response.status_code in (400, 404):
+                # On an endpoint keyed by a caller-supplied id (e.g.
+                # /items/{id}), a clean 404 means "that id doesn't exist" and
+                # a 400 means the id itself is malformed ("Invalid id, not an
+                # uuid" — verified live) — both are the caller's id being
+                # wrong, not a provider outage, so raise the caller's distinct
+                # subclass instead of falling through to the generic error.
+                logger.warning(
+                    "Pluggy request to %s returned %s", path, response.status_code
+                )
                 raise not_found_error(f"Pluggy resource not found at {path}")
             response.raise_for_status()
             return response.json()
