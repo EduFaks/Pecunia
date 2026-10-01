@@ -1,7 +1,14 @@
-"""Task 2 (Track T): `BankProvider` protocol, its `PluggyProvider`
-implementation, and `FakeBankProvider`. `PluggyProvider`'s tests mock the
-httpx transport — no real network call ever runs in this suite (CONVENTIONS:
-the provider is injected everywhere else so callers pass a fake)."""
+"""Task 2 (Track T) + fix wave 2 (Meu Pluggy free tier): `BankProvider`
+protocol, its `PluggyProvider` implementation, and `FakeBankProvider`.
+`PluggyProvider`'s tests mock the httpx transport — no real network call
+ever runs in this suite (CONVENTIONS: the provider is injected everywhere
+else so callers pass a fake).
+
+Verified live against Meu Pluggy's free tier (2026-10-01): client-wide item
+listing (`GET /v2/items`) 403s (commercial opt-in) — discovery is by item id
+(`GET /items/{id}`) instead. `GET /v2/transactions` only accepts `accountId`
+(+ `after`) — `pageSize`/`from` both 400. The date-window filter moved
+client-side."""
 
 import json
 from datetime import date
@@ -11,6 +18,7 @@ import pytest
 
 from pecunia.services.banksync.provider import (
     PLUGGY_BASE_URL,
+    BankItemNotFoundError,
     BankProviderError,
     FakeBankProvider,
     PluggyProvider,
@@ -28,6 +36,21 @@ def _provider(handler) -> PluggyProvider:
     return PluggyProvider("client-id", "client-secret", client=_mock_client(handler))
 
 
+def _tx_json(external_id: str, iso_date: str, **overrides) -> dict:
+    row = {
+        "id": external_id,
+        "description": "Purchase",
+        "amount": 50.0,
+        "date": f"{iso_date}T12:00:00.000Z",
+        "currencyCode": "BRL",
+        "status": "POSTED",
+        "type": "DEBIT",
+        "category": None,
+    }
+    row.update(overrides)
+    return row
+
+
 # --------------------------------------------------------------------------- #
 # Auth: once, cached, reused
 # --------------------------------------------------------------------------- #
@@ -42,14 +65,16 @@ async def test_auth_happens_once_and_the_key_is_reused_across_calls():
             assert request.method == "POST"
             return httpx.Response(200, json={"apiKey": "key-1"})
         assert request.headers["X-API-KEY"] == "key-1"
-        if request.url.path == "/v2/items":
-            return httpx.Response(200, json={"results": [], "next": None})
+        if request.url.path == "/items/item-1":
+            return httpx.Response(
+                200, json={"id": "item-1", "status": "UPDATED", "connector": {"name": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return httpx.Response(200, json={"results": []})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     provider = _provider(handler)
-    await provider.fetch_connections()
+    await provider.fetch_connection("item-1")
     await provider.fetch_accounts("item-1")
     assert calls["auth"] == 1
 
@@ -61,10 +86,12 @@ async def test_auth_body_sends_client_id_and_secret():
         if request.url.path == "/auth":
             seen["body"] = json.loads(request.content)
             return httpx.Response(200, json={"apiKey": "key-1"})
-        return httpx.Response(200, json={"results": [], "next": None})
+        return httpx.Response(
+            200, json={"id": "item-1", "status": "UPDATED", "connector": {"name": "Bank"}}
+        )
 
     provider = _provider(handler)
-    await provider.fetch_connections()
+    await provider.fetch_connection("item-1")
     assert seen["body"] == {"clientId": "client-id", "clientSecret": "client-secret"}
 
 
@@ -80,22 +107,18 @@ async def test_single_401_triggers_one_reauth_and_retry_then_succeeds():
         if request.url.path == "/auth":
             calls["auth"] += 1
             return httpx.Response(200, json={"apiKey": f"key-{calls['auth']}"})
-        assert request.url.path == "/v2/items"
+        assert request.url.path == "/items/item-1"
         calls["items"] += 1
         if calls["items"] == 1:
             return httpx.Response(401, json={"message": "expired"})
         assert request.headers["X-API-KEY"] == "key-2"
         return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "Bank"}}],
-                "next": None,
-            },
+            200, json={"id": "item-1", "status": "UPDATED", "connector": {"name": "Bank"}}
         )
 
     provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert result == [ProviderConnection(item_id="i1", institution_name="Bank", status="UPDATED")]
+    result = await provider.fetch_connection("item-1")
+    assert result == ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")
     assert calls["auth"] == 2
     assert calls["items"] == 2
 
@@ -107,261 +130,74 @@ async def test_second_401_after_reauth_raises_bank_provider_error():
         if request.url.path == "/auth":
             calls["auth"] += 1
             return httpx.Response(200, json={"apiKey": f"key-{calls['auth']}"})
-        assert request.url.path == "/v2/items"
+        assert request.url.path == "/items/item-1"
         calls["items"] += 1
         return httpx.Response(401, json={"message": "expired"})
 
     provider = _provider(handler)
     with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
+        await provider.fetch_connection("item-1")
     assert calls["auth"] == 2
     assert calls["items"] == 2
 
 
 # --------------------------------------------------------------------------- #
-# Pagination: all three `next` shapes, aggregated
+# fetch_connection — mapping, fallback, 404 -> BankItemNotFoundError
 # --------------------------------------------------------------------------- #
 
 
-async def test_pagination_follows_next_as_a_full_url():
+async def test_fetch_connection_maps_item_fields():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/auth":
             return httpx.Response(200, json={"apiKey": "key-1"})
-        params = dict(request.url.params)
-        if "after" not in params:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-                    "next": "https://api.pluggy.ai/v2/items?after=tok-1&pageSize=500",
-                },
-            )
-        assert params["after"] == "tok-1"
+        assert request.url.path == "/items/item-1"
         return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i2", "status": "OUTDATED", "connector": {"name": "B"}}],
-                "next": None,
-            },
+            200, json={"id": "item-1", "status": "UPDATED", "connector": {"name": "MeuPluggy"}}
         )
 
     provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert result == [
-        ProviderConnection(item_id="i1", institution_name="A", status="UPDATED"),
-        ProviderConnection(item_id="i2", institution_name="B", status="OUTDATED"),
-    ]
+    result = await provider.fetch_connection("item-1")
+    assert result == ProviderConnection(
+        item_id="item-1", institution_name="MeuPluggy", status="UPDATED"
+    )
 
 
-async def test_pagination_follows_next_as_a_bare_query_string():
+async def test_fetch_connection_falls_back_to_empty_institution_name():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/auth":
             return httpx.Response(200, json={"apiKey": "key-1"})
-        params = dict(request.url.params)
-        if "after" not in params:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-                    "next": "?after=tok-2&pageSize=500",
-                },
-            )
-        assert params["after"] == "tok-2"
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i2", "status": "OUTDATED", "connector": {"name": "B"}}],
-                "next": None,
-            },
-        )
+        return httpx.Response(200, json={"id": "i1", "status": "LOGIN_ERROR"})
 
     provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert [c.item_id for c in result] == ["i1", "i2"]
+    result = await provider.fetch_connection("i1")
+    assert result == ProviderConnection(item_id="i1", institution_name="", status="LOGIN_ERROR")
 
 
-async def test_pagination_follows_next_as_a_bare_token():
+async def test_fetch_connection_404_raises_bank_item_not_found_error():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/auth":
             return httpx.Response(200, json={"apiKey": "key-1"})
-        params = dict(request.url.params)
-        if "after" not in params:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-                    "next": "tok-3",
-                },
-            )
-        assert params["after"] == "tok-3"
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i2", "status": "OUTDATED", "connector": {"name": "B"}}],
-                "next": None,
-            },
-        )
+        return httpx.Response(404, json={"message": "Item not found"})
 
     provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert [c.item_id for c in result] == ["i1", "i2"]
+    with pytest.raises(BankItemNotFoundError):
+        await provider.fetch_connection("missing-item")
 
 
-async def test_pagination_follows_next_as_bare_query_string_without_question_mark():
-    """Pluggy pagination `next` can be a bare query string like "after=tok-3"
-    (without the leading "?"). This must be parsed robustly without leaking
-    a raw KeyError."""
+async def test_fetch_connection_non_404_error_raises_plain_bank_provider_error_not_item_not_found():
+    """Any other failure (500, timeout, etc) must stay a plain
+    BankProviderError, not the 404-specific subclass — only a clean 404 is
+    "that id doesn't exist"."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/auth":
             return httpx.Response(200, json={"apiKey": "key-1"})
-        params = dict(request.url.params)
-        if "after" not in params:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-                    "next": "after=tok-3",
-                },
-            )
-        assert params["after"] == "tok-3"
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i2", "status": "OUTDATED", "connector": {"name": "B"}}],
-                "next": None,
-            },
-        )
+        return httpx.Response(500, json={"error": "boom"})
 
     provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert [c.item_id for c in result] == ["i1", "i2"]
-
-
-async def test_pagination_terminates_when_next_key_is_missing():
-    """Pagination should terminate when the response has no 'next' key at all,
-    same as if next is null."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/auth":
-            return httpx.Response(200, json={"apiKey": "key-1"})
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-            },
-        )
-
-    provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert [c.item_id for c in result] == ["i1"]
-
-
-async def test_pagination_first_page_requests_page_size_500():
-    seen_params = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/auth":
-            return httpx.Response(200, json={"apiKey": "key-1"})
-        seen_params.update(dict(request.url.params))
-        return httpx.Response(200, json={"results": [], "next": None})
-
-    provider = _provider(handler)
-    await provider.fetch_connections()
-    assert seen_params["pageSize"] == "500"
-
-
-async def test_pagination_second_page_request_still_carries_page_size_500():
-    """Finding 9: the `after` param must not replace `pageSize` on later
-    pages — dropping it lets Pluggy fall back to its own (much smaller)
-    default page size, ballooning the number of requests."""
-    seen_page_sizes = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/auth":
-            return httpx.Response(200, json={"apiKey": "key-1"})
-        params = dict(request.url.params)
-        seen_page_sizes.append(params.get("pageSize"))
-        if "after" not in params:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-                    "next": "?after=tok-1&pageSize=500",
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i2", "status": "UPDATED", "connector": {"name": "B"}}],
-                "next": None,
-            },
-        )
-
-    provider = _provider(handler)
-    await provider.fetch_connections()
-    assert seen_page_sizes == ["500", "500"]
-
-
-async def test_pagination_repeated_cursor_raises_bank_provider_error():
-    """Finding 9: a `next` cursor that never advances (Pluggy returning the
-    same `after` token again) must not spin forever — it's a provider
-    misbehavior, surfaced as a BankProviderError."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/auth":
-            return httpx.Response(200, json={"apiKey": "key-1"})
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": "i1", "status": "UPDATED", "connector": {"name": "A"}}],
-                "next": "?after=tok-stuck&pageSize=500",
-            },
-        )
-
-    provider = _provider(handler)
-    with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
-
-
-async def test_pagination_exceeding_page_cap_raises_bank_provider_error():
-    """Finding 9: even a cursor that keeps legitimately advancing must not
-    loop unbounded — a page cap guards against a runaway or malicious feed."""
-    calls = {"n": 0}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/auth":
-            return httpx.Response(200, json={"apiKey": "key-1"})
-        calls["n"] += 1
-        return httpx.Response(
-            200,
-            json={
-                "results": [{"id": f"i{calls['n']}", "status": "UPDATED", "connector": {"name": "A"}}],
-                "next": f"?after=tok-{calls['n']}&pageSize=500",
-            },
-        )
-
-    provider = _provider(handler)
-    with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
-
-
-# --------------------------------------------------------------------------- #
-# fetch_connections — missing connector fallback
-# --------------------------------------------------------------------------- #
-
-
-async def test_fetch_connections_falls_back_to_empty_institution_name():
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/auth":
-            return httpx.Response(200, json={"apiKey": "key-1"})
-        return httpx.Response(
-            200, json={"results": [{"id": "i1", "status": "LOGIN_ERROR"}], "next": None}
-        )
-
-    provider = _provider(handler)
-    result = await provider.fetch_connections()
-    assert result == [ProviderConnection(item_id="i1", institution_name="", status="LOGIN_ERROR")]
+    with pytest.raises(BankProviderError) as exc_info:
+        await provider.fetch_connection("item-1")
+    assert not isinstance(exc_info.value, BankItemNotFoundError)
 
 
 # --------------------------------------------------------------------------- #
@@ -550,8 +386,26 @@ async def test_fetch_accounts_missing_number_is_none():
 
 
 # --------------------------------------------------------------------------- #
-# fetch_transactions — sign matrix, PENDING passthrough, category
+# fetch_transactions — request shape (accountId ONLY), sign matrix, PENDING
+# passthrough, category, client-side date filtering, pagination
 # --------------------------------------------------------------------------- #
+
+
+async def test_fetch_transactions_request_carries_only_account_id_no_page_size_no_from():
+    """Meu Pluggy's free tier 400s if `pageSize` or `from` is present —
+    verified live 2026-10-01. The request must carry accountId alone."""
+    seen_params = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        assert request.url.path == "/v2/transactions"
+        seen_params.append(dict(request.url.params))
+        return httpx.Response(200, json={"results": [], "next": None})
+
+    provider = _provider(handler)
+    await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert seen_params == [{"accountId": "acc-1"}]
 
 
 async def test_fetch_transactions_bank_debit_is_negative_and_credit_is_positive():
@@ -560,32 +414,13 @@ async def test_fetch_transactions_bank_debit_is_negative_and_credit_is_positive(
             return httpx.Response(200, json={"apiKey": "key-1"})
         assert request.url.path == "/v2/transactions"
         params = dict(request.url.params)
-        assert params["accountId"] == "acc-1"
-        assert params["from"] == "2026-01-01"
+        assert params == {"accountId": "acc-1"}
         return httpx.Response(
             200,
             json={
                 "results": [
-                    {
-                        "id": "tx-1",
-                        "description": "Groceries",
-                        "amount": 50.0,
-                        "date": "2026-01-05T12:00:00.000Z",
-                        "currencyCode": "BRL",
-                        "status": "POSTED",
-                        "type": "DEBIT",
-                        "category": "Food",
-                    },
-                    {
-                        "id": "tx-2",
-                        "description": "Salary",
-                        "amount": 1000.0,
-                        "date": "2026-01-06T12:00:00.000Z",
-                        "currencyCode": "BRL",
-                        "status": "POSTED",
-                        "type": "CREDIT",
-                        "category": None,
-                    },
+                    _tx_json("tx-1", "2026-01-05", description="Groceries", amount=50.0, type="DEBIT", category="Food"),
+                    _tx_json("tx-2", "2026-01-06", description="Salary", amount=1000.0, type="CREDIT", category=None),
                 ],
                 "next": None,
             },
@@ -627,26 +462,8 @@ async def test_fetch_transactions_credit_card_purchase_quirk_is_corrected():
             200,
             json={
                 "results": [
-                    {
-                        "id": "tx-3",
-                        "description": "Store purchase",
-                        "amount": 100.0,
-                        "date": "2026-01-07T12:00:00.000Z",
-                        "currencyCode": "BRL",
-                        "status": "POSTED",
-                        "type": "DEBIT",
-                        "category": "Shopping",
-                    },
-                    {
-                        "id": "tx-4",
-                        "description": "Card payment",
-                        "amount": 200.0,
-                        "date": "2026-01-08T12:00:00.000Z",
-                        "currencyCode": "BRL",
-                        "status": "POSTED",
-                        "type": "CREDIT",
-                        "category": None,
-                    },
+                    _tx_json("tx-3", "2026-01-07", description="Store purchase", amount=100.0, type="DEBIT", category="Shopping"),
+                    _tx_json("tx-4", "2026-01-08", description="Card payment", amount=200.0, type="CREDIT", category=None),
                 ],
                 "next": None,
             },
@@ -666,16 +483,7 @@ async def test_fetch_transactions_pending_rows_pass_through_with_status():
             200,
             json={
                 "results": [
-                    {
-                        "id": "tx-5",
-                        "description": "Pending charge",
-                        "amount": 30.0,
-                        "date": "2026-01-09T12:00:00.000Z",
-                        "currencyCode": "BRL",
-                        "status": "PENDING",
-                        "type": "DEBIT",
-                        "category": None,
-                    }
+                    _tx_json("tx-5", "2026-01-09", description="Pending charge", amount=30.0, status="PENDING", category=None),
                 ],
                 "next": None,
             },
@@ -684,6 +492,187 @@ async def test_fetch_transactions_pending_rows_pass_through_with_status():
     provider = _provider(handler)
     result = await provider.fetch_transactions("acc-x", from_date=date(2026, 1, 1))
     assert result[0].status == "PENDING"
+
+
+async def test_fetch_transactions_filters_rows_older_than_from_date_client_side():
+    """The date window used to be a server-side `from` param; Meu Pluggy's
+    free tier rejects that param, so it's now applied client-side after
+    fetching every page."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    _tx_json("tx-old", "2025-12-31"),
+                    _tx_json("tx-new", "2026-01-05"),
+                ],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert [t.external_id for t in result] == ["tx-new"]
+
+
+# --------------------------------------------------------------------------- #
+# Pagination: all three `next` shapes, aggregated — exercised via
+# fetch_transactions, the only remaining _get_paged consumer
+# --------------------------------------------------------------------------- #
+
+
+async def test_pagination_follows_next_as_a_full_url():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        if "after" not in params:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [_tx_json("tx-1", "2026-01-05")],
+                    "next": "https://api.pluggy.ai/v2/transactions?after=tok-1",
+                },
+            )
+        assert params["after"] == "tok-1"
+        return httpx.Response(200, json={"results": [_tx_json("tx-2", "2026-01-06")], "next": None})
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert [t.external_id for t in result] == ["tx-1", "tx-2"]
+
+
+async def test_pagination_follows_next_as_a_bare_query_string():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        if "after" not in params:
+            return httpx.Response(
+                200, json={"results": [_tx_json("tx-1", "2026-01-05")], "next": "?after=tok-2"}
+            )
+        assert params["after"] == "tok-2"
+        return httpx.Response(200, json={"results": [_tx_json("tx-2", "2026-01-06")], "next": None})
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert [t.external_id for t in result] == ["tx-1", "tx-2"]
+
+
+async def test_pagination_follows_next_as_a_bare_token():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        if "after" not in params:
+            return httpx.Response(
+                200, json={"results": [_tx_json("tx-1", "2026-01-05")], "next": "tok-3"}
+            )
+        assert params["after"] == "tok-3"
+        return httpx.Response(200, json={"results": [_tx_json("tx-2", "2026-01-06")], "next": None})
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert [t.external_id for t in result] == ["tx-1", "tx-2"]
+
+
+async def test_pagination_follows_next_as_bare_query_string_without_question_mark():
+    """Pluggy pagination `next` can be a bare query string like "after=tok-3"
+    (without the leading "?"). This must be parsed robustly without leaking
+    a raw KeyError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        if "after" not in params:
+            return httpx.Response(
+                200, json={"results": [_tx_json("tx-1", "2026-01-05")], "next": "after=tok-3"}
+            )
+        assert params["after"] == "tok-3"
+        return httpx.Response(200, json={"results": [_tx_json("tx-2", "2026-01-06")], "next": None})
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert [t.external_id for t in result] == ["tx-1", "tx-2"]
+
+
+async def test_pagination_terminates_when_next_key_is_missing():
+    """Pagination should terminate when the response has no 'next' key at all,
+    same as if next is null."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(200, json={"results": [_tx_json("tx-1", "2026-01-05")]})
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert [t.external_id for t in result] == ["tx-1"]
+
+
+async def test_pagination_requests_never_carry_a_page_size_param():
+    """Finding (fix wave 2): unlike the old /v2/items listing, no page here
+    may ever carry `pageSize` — Meu Pluggy 400s on it."""
+    seen_params = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        params = dict(request.url.params)
+        seen_params.append(params)
+        if "after" not in params:
+            return httpx.Response(
+                200, json={"results": [_tx_json("tx-1", "2026-01-05")], "next": "?after=tok-1"}
+            )
+        return httpx.Response(200, json={"results": [_tx_json("tx-2", "2026-01-06")], "next": None})
+
+    provider = _provider(handler)
+    await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert all("pageSize" not in p for p in seen_params)
+    assert all("from" not in p for p in seen_params)
+
+
+async def test_pagination_repeated_cursor_raises_bank_provider_error():
+    """Finding 9: a `next` cursor that never advances (Pluggy returning the
+    same `after` token again) must not spin forever — it's a provider
+    misbehavior, surfaced as a BankProviderError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200, json={"results": [_tx_json("tx-1", "2026-01-05")], "next": "?after=tok-stuck"}
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+
+
+async def test_pagination_exceeding_page_cap_raises_bank_provider_error():
+    """Finding 9: even a cursor that keeps legitimately advancing must not
+    loop unbounded — a page cap guards against a runaway or malicious feed."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        calls["n"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "results": [_tx_json(f"tx-{calls['n']}", "2026-01-05")],
+                "next": f"?after=tok-{calls['n']}",
+            },
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
 
 
 # --------------------------------------------------------------------------- #
@@ -699,7 +688,7 @@ async def test_server_error_status_raises_bank_provider_error():
 
     provider = _provider(handler)
     with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
+        await provider.fetch_connection("item-1")
 
 
 async def test_invalid_json_body_raises_bank_provider_error():
@@ -710,7 +699,7 @@ async def test_invalid_json_body_raises_bank_provider_error():
 
     provider = _provider(handler)
     with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
+        await provider.fetch_connection("item-1")
 
 
 async def test_timeout_raises_bank_provider_error():
@@ -721,7 +710,7 @@ async def test_timeout_raises_bank_provider_error():
 
     provider = _provider(handler)
     with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
+        await provider.fetch_connection("item-1")
 
 
 async def test_auth_failure_status_raises_bank_provider_error():
@@ -731,7 +720,7 @@ async def test_auth_failure_status_raises_bank_provider_error():
 
     provider = _provider(handler)
     with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
+        await provider.fetch_connection("item-1")
 
 
 async def test_auth_response_missing_api_key_raises_bank_provider_error():
@@ -741,7 +730,7 @@ async def test_auth_response_missing_api_key_raises_bank_provider_error():
 
     provider = _provider(handler)
     with pytest.raises(BankProviderError):
-        await provider.fetch_connections()
+        await provider.fetch_connection("item-1")
 
 
 # --------------------------------------------------------------------------- #
@@ -749,7 +738,7 @@ async def test_auth_response_missing_api_key_raises_bank_provider_error():
 # --------------------------------------------------------------------------- #
 
 
-async def test_fake_bank_provider_returns_canned_connections_and_accounts():
+async def test_fake_bank_provider_returns_canned_connection_and_accounts():
     conn = ProviderConnection(item_id="i1", institution_name="Bank", status="UPDATED")
     account = ProviderAccount(
         pluggy_account_id="acc-1",
@@ -765,9 +754,17 @@ async def test_fake_bank_provider_returns_canned_connections_and_accounts():
         bill_due_date=None,
     )
     fake = FakeBankProvider(connections=[conn], accounts_by_item={"i1": [account]})
-    assert await fake.fetch_connections() == [conn]
+    assert await fake.fetch_connection("i1") == conn
     assert await fake.fetch_accounts("i1") == [account]
     assert await fake.fetch_accounts("unknown-item") == []
+
+
+async def test_fake_bank_provider_fetch_connection_unknown_item_raises_bank_item_not_found_error():
+    fake = FakeBankProvider(
+        connections=[ProviderConnection(item_id="i1", institution_name="Bank", status="UPDATED")]
+    )
+    with pytest.raises(BankItemNotFoundError):
+        await fake.fetch_connection("unknown-item")
 
 
 async def test_fake_bank_provider_filters_transactions_by_from_date_and_records_calls():
@@ -798,19 +795,25 @@ async def test_fake_bank_provider_filters_transactions_by_from_date_and_records_
 async def test_fake_bank_provider_raise_all_affects_every_method():
     fake = FakeBankProvider(raise_all=True)
     with pytest.raises(BankProviderError):
-        await fake.fetch_connections()
+        await fake.fetch_connection("item-1")
     with pytest.raises(BankProviderError):
         await fake.fetch_accounts("item-1")
     with pytest.raises(BankProviderError):
         await fake.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
 
 
-async def test_fake_bank_provider_raise_for_items_only_affects_that_item():
+async def test_fake_bank_provider_raise_for_items_affects_connection_and_accounts():
     fake = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-ok", institution_name="Bank", status="UPDATED")],
         accounts_by_item={"item-ok": [], "item-bad": []},
         raise_for_items={"item-bad"},
     )
+    assert await fake.fetch_connection("item-ok") == ProviderConnection(
+        item_id="item-ok", institution_name="Bank", status="UPDATED"
+    )
     assert await fake.fetch_accounts("item-ok") == []
+    with pytest.raises(BankProviderError):
+        await fake.fetch_connection("item-bad")
     with pytest.raises(BankProviderError):
         await fake.fetch_accounts("item-bad")
 

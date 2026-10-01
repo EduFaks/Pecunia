@@ -4,6 +4,13 @@ depends on; `PluggyProvider` is the real implementation (Pluggy's Open
 Finance aggregator API) and `FakeBankProvider` is the hand-rolled test double
 every other test in the suite uses instead — no real network call ever runs
 in tests.
+
+Fix wave 2 (Meu Pluggy free tier, verified live 2026-10-01): client-wide item
+listing (`GET /v2/items`) is a commercial opt-in Pecunia's tier doesn't have
+— it 403s. Discovery is instead by item id (`GET /items/{id}`), one item at a
+time. `GET /v2/transactions` on this tier only accepts `accountId` (+ `after`
+cursor) — `pageSize`/`from` both 400. The date-window filter that used to be
+server-side (`from`) is now applied client-side after fetching.
 """
 
 import logging
@@ -21,20 +28,23 @@ logger = logging.getLogger(__name__)
 
 PLUGGY_BASE_URL = "https://api.pluggy.ai"
 
-# Pluggy's cursor-paginated endpoints (/v2/items, /v2/transactions) return up
-# to this many rows per page.
-_PAGE_SIZE = 500
-
 # A hard ceiling on pages followed for one _get_paged call — guards against a
 # cursor that keeps legitimately advancing but never actually terminates
-# (finding 9). 200 pages * 500/page is comfortably beyond any personal-scale
-# workspace's item/transaction volume.
+# (finding 9). 200 pages is comfortably beyond any personal-scale workspace's
+# transaction volume (a real ~12-month history came back in a single page).
 _MAX_PAGES = 200
 
 
 class BankProviderError(Exception):
     """Any Pluggy failure — HTTP status (incl. 429), timeout, auth, bad JSON.
     Callers never see httpx."""
+
+
+class BankItemNotFoundError(BankProviderError):
+    """A clean 404 from `GET /items/{id}` — the item id the caller named
+    doesn't (or no longer) exist on the provider. Distinct from every other
+    `BankProviderError` so the service can mark a connection ITEM_NOT_FOUND
+    rather than treating it as a generic provider outage."""
 
 
 @dataclass(frozen=True)
@@ -71,7 +81,7 @@ class ProviderTransaction:
 
 
 class BankProvider(Protocol):
-    async def fetch_connections(self) -> list[ProviderConnection]: ...
+    async def fetch_connection(self, item_id: str) -> ProviderConnection: ...
 
     async def fetch_accounts(self, item_id: str) -> list[ProviderAccount]: ...
 
@@ -145,7 +155,13 @@ class PluggyProvider:
         async with httpx.AsyncClient(base_url=PLUGGY_BASE_URL) as client:
             return await client.get(path, params=params, headers=headers, timeout=self._timeout)
 
-    async def _get(self, path: str, params: dict[str, object]) -> object:
+    async def _get(
+        self,
+        path: str,
+        params: dict[str, object],
+        *,
+        not_found_error: type[BankProviderError] | None = None,
+    ) -> object:
         try:
             if self._api_key is None:
                 await self._auth()
@@ -156,6 +172,13 @@ class PluggyProvider:
                 self._api_key = None
                 await self._auth()
                 response = await self._request(path, params)
+            if not_found_error is not None and response.status_code == 404:
+                # A clean 404 on an endpoint keyed by a caller-supplied id
+                # (e.g. /items/{id}) means "that id doesn't exist", not a
+                # provider outage — raise the caller's distinct subclass
+                # instead of falling through to the generic error below.
+                logger.warning("Pluggy request to %s returned 404", path)
+                raise not_found_error(f"Pluggy resource not found at {path}")
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
@@ -177,7 +200,12 @@ class PluggyProvider:
             raise BankProviderError(f"Pluggy auth response missing apiKey: {exc}") from exc
 
     async def _get_paged(self, path: str, params: dict[str, object]) -> list[dict]:
-        query: dict[str, object] = {**params, "pageSize": _PAGE_SIZE}
+        """Cursor-paginates `path`, re-sending the caller's own `params`
+        (unchanged) on every page plus `after` once a `next` cursor appears.
+        Meu Pluggy's free tier 400s if `pageSize` (or any param it doesn't
+        expect) is present, so — unlike the client-wide listing endpoints
+        this used to also serve — no page-size param is ever sent here."""
+        query: dict[str, object] = dict(params)
         results: list[dict] = []
         previous_after: str | None = None
         for _ in range(_MAX_PAGES):
@@ -206,24 +234,21 @@ class PluggyProvider:
                     f"Pluggy pagination for {path} returned a repeated cursor {after_token!r}"
                 )
             previous_after = after_token
-            # `pageSize` must be re-sent on every page, not just the first —
-            # dropping it lets Pluggy fall back to its own (much smaller)
-            # default page size, ballooning the number of requests
-            # (finding 9).
-            query = {**params, "after": after_token, "pageSize": _PAGE_SIZE}
+            query = {**params, "after": after_token}
         logger.warning("Pluggy pagination for %s exceeded %s pages", path, _MAX_PAGES)
         raise BankProviderError(f"Pluggy pagination for {path} exceeded {_MAX_PAGES} pages")
 
-    async def fetch_connections(self) -> list[ProviderConnection]:
-        rows = await self._get_paged("/v2/items", {})
-        return [
-            ProviderConnection(
-                item_id=row["id"],
-                institution_name=(row.get("connector") or {}).get("name", ""),
-                status=row["status"],
-            )
-            for row in rows
-        ]
+    async def fetch_connection(self, item_id: str) -> ProviderConnection:
+        data = await self._get(
+            f"/items/{item_id}", {}, not_found_error=BankItemNotFoundError
+        )
+        if not isinstance(data, dict):
+            raise BankProviderError(f"Pluggy /items/{item_id} response wasn't a JSON object")
+        return ProviderConnection(
+            item_id=data["id"],
+            institution_name=(data.get("connector") or {}).get("name", ""),
+            status=data["status"],
+        )
 
     async def fetch_accounts(self, item_id: str) -> list[ProviderAccount]:
         data = await self._get("/accounts", {"itemId": item_id})
@@ -267,11 +292,13 @@ class PluggyProvider:
     async def fetch_transactions(
         self, pluggy_account_id: str, *, from_date: date
     ) -> list[ProviderTransaction]:
-        rows = await self._get_paged(
-            "/v2/transactions",
-            {"accountId": pluggy_account_id, "from": from_date.isoformat()},
-        )
-        return [self._map_transaction(row) for row in rows]
+        # Meu Pluggy's free tier only accepts `accountId` here — `pageSize`
+        # and `from` both 400 ("property ... should not exist"). The
+        # from_date window is instead applied client-side, below, after
+        # mapping every page.
+        rows = await self._get_paged("/v2/transactions", {"accountId": pluggy_account_id})
+        transactions = [self._map_transaction(row) for row in rows]
+        return [t for t in transactions if t.date >= from_date]
 
     def _map_transaction(self, row: dict) -> ProviderTransaction:
         currency = row["currencyCode"]
@@ -296,10 +323,10 @@ class FakeBankProvider:
     sync-service test can assert "one call per linked account, from the
     right date" without a mocking framework. `raise_all=True` makes every
     method raise `BankProviderError`; `raise_for_items` does the same for
-    `fetch_accounts` calls naming one of those item ids specifically;
-    `raise_for_accounts` does the same for `fetch_transactions` calls naming
-    one of those pluggy_account_ids specifically (simulates one link's
-    import failing without touching its siblings)."""
+    `fetch_connection`/`fetch_accounts` calls naming one of those item ids
+    specifically; `raise_for_accounts` does the same for `fetch_transactions`
+    calls naming one of those pluggy_account_ids specifically (simulates one
+    link's import failing without touching its siblings)."""
 
     def __init__(
         self,
@@ -319,10 +346,13 @@ class FakeBankProvider:
         self._raise_for_accounts = raise_for_accounts or set()
         self.transaction_calls: list[tuple[str, date]] = []
 
-    async def fetch_connections(self) -> list[ProviderConnection]:
-        if self._raise_all:
-            raise BankProviderError("fake provider failure")
-        return list(self._connections)
+    async def fetch_connection(self, item_id: str) -> ProviderConnection:
+        if self._raise_all or item_id in self._raise_for_items:
+            raise BankProviderError(f"fake provider failure for item {item_id}")
+        connection = next((c for c in self._connections if c.item_id == item_id), None)
+        if connection is None:
+            raise BankItemNotFoundError(f"fake provider: unknown item {item_id}")
+        return connection
 
     async def fetch_accounts(self, item_id: str) -> list[ProviderAccount]:
         if self._raise_all or item_id in self._raise_for_items:
