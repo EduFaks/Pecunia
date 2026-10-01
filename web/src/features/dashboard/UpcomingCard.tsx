@@ -51,15 +51,15 @@ function UpcomingCard() {
       <h2 className="font-display text-lg text-ink">Next 14 days</h2>
 
       {isError ? (
-        <p className="mt-4 text-sm text-ink-faint">
+        <p className="mt-5 text-sm text-ink-faint">
           Couldn't load what's upcoming. Try refreshing.
         </p>
       ) : isLoading ? (
-        <p className="mt-4 text-sm text-ink-2">Loading…</p>
+        <p className="mt-5 text-sm text-ink-2">Loading…</p>
       ) : upcoming.length === 0 ? (
-        <p className="mt-4 text-sm text-ink-2">nada nos próximos 14 dias</p>
+        <p className="mt-5 text-sm text-ink-2">nada nos próximos 14 dias</p>
       ) : (
-        <ul className="mt-4 flex flex-col divide-y divide-hairline">
+        <ul className="mt-5 flex flex-col divide-y divide-hairline">
           {upcoming.map((item) => (
             <li
               key={`${item.kind}:${item.id}`}

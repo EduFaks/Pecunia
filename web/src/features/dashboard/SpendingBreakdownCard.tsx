@@ -80,15 +80,15 @@ function SpendingBreakdownCard() {
       <h2 className="font-display text-lg text-ink">Gastos por categoria</h2>
 
       {isError ? (
-        <p className="mt-4 text-sm text-ink-faint">
+        <p className="mt-5 text-sm text-ink-faint">
           Não foi possível carregar seus gastos. Tente atualizar.
         </p>
       ) : isLoading ? (
-        <p className="mt-4 text-sm text-ink-2">Carregando…</p>
+        <p className="mt-5 text-sm text-ink-2">Carregando…</p>
       ) : isEmpty ? (
-        <p className="mt-4 text-sm text-ink-2">Nenhum gasto neste mês ainda.</p>
+        <p className="mt-5 text-sm text-ink-2">Nenhum gasto neste mês ainda.</p>
       ) : (
-        <div className="mt-4 min-w-0">
+        <div className="mt-5 min-w-0">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 min-w-0">
             <MoneyText minor={totalMinor} currency={base_currency} variant="hero" className="text-3xl" />
             {delta ? (

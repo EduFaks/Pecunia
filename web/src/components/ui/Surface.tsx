@@ -3,11 +3,17 @@ import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 export type SurfaceLevel = 1 | 2 | 3;
-export type SurfaceShadow = "none" | "sm" | "lg";
+export type SurfaceShadow = "none" | "sm" | "lg" | "glow";
 
 export interface SurfaceProps extends HTMLAttributes<HTMLDivElement> {
   /** Elevation step: 1 = cards, 2 = raised cards/popovers, 3 = overlays/menus. */
   level?: SurfaceLevel;
+  /**
+   * `"glow"` is `"lg"`'s depth plus a faint white ambient halo
+   * (`--pc-shadow-glow`) — reserved for exactly one surface app-wide (the
+   * Dashboard's `SafeToSpendCard` hero). Never reach for it a second place;
+   * it stops reading as emphasis the moment two cards have it.
+   */
   shadow?: SurfaceShadow;
 }
 
@@ -21,6 +27,7 @@ const SHADOW_CLASSES: Record<SurfaceShadow, string> = {
   none: "",
   sm: "shadow-pc-1",
   lg: "shadow-pc-2",
+  glow: "shadow-pc-glow",
 };
 
 /**

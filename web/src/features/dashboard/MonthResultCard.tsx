@@ -41,15 +41,15 @@ function MonthResultCard() {
       <h2 className="font-display text-lg text-ink">Resultado do mês</h2>
 
       {isError ? (
-        <p className="mt-4 text-sm text-ink-faint">
+        <p className="mt-5 text-sm text-ink-faint">
           Não foi possível carregar o resultado do mês. Tente atualizar.
         </p>
       ) : isLoading ? (
-        <p className="mt-4 text-sm text-ink-2">Carregando…</p>
+        <p className="mt-5 text-sm text-ink-2">Carregando…</p>
       ) : isEmpty || !savings || !entry ? (
-        <p className="mt-4 text-sm text-ink-2">Sem dados para este mês ainda.</p>
+        <p className="mt-5 text-sm text-ink-2">Sem dados para este mês ainda.</p>
       ) : (
-        <div className="mt-4 flex flex-col gap-2 min-w-0">
+        <div className="mt-5 flex flex-col gap-2 min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 min-w-0">
             <span className="text-sm text-ink-2">Entrou</span>
             <MoneyText minor={savings.income_minor} currency={base_currency} className="text-sm" />

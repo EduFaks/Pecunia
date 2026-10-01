@@ -66,15 +66,15 @@ function AccountsCardsCard() {
       </div>
 
       {isError ? (
-        <p className="mt-4 text-sm text-ink-faint">
+        <p className="mt-5 text-sm text-ink-faint">
           Couldn't load your accounts. Try refreshing.
         </p>
       ) : isLoading ? (
-        <p className="mt-4 text-sm text-ink-2">Loading…</p>
+        <p className="mt-5 text-sm text-ink-2">Loading…</p>
       ) : accounts.length === 0 ? (
-        <p className="mt-4 text-sm text-ink-2">No accounts yet.</p>
+        <p className="mt-5 text-sm text-ink-2">No accounts yet.</p>
       ) : (
-        <ul className="mt-4 flex flex-col divide-y divide-hairline">
+        <ul className="mt-5 flex flex-col divide-y divide-hairline">
           {accounts.map((account) => {
             const link = linkFor(account.id);
             const usage =

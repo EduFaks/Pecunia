@@ -51,11 +51,23 @@
   /* Focus */
   --pc-focus: #fafafa;
 
-  /* Radii, shadow, motion */
-  --pc-radius: 6px;
-  --pc-radius-lg: 10px;
-  --pc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.6);
-  --pc-shadow-2: 0 10px 40px rgba(0, 0, 0, 0.5);
+  /* Radii, shadow, motion — tuned toward a more premium, high-end elevation
+     (Track U, Task 8): a touch more roundness on cards/surfaces reads
+     intentional rather than default, and a two-layer shadow (a tight
+     near-black contact shadow plus a larger, softer ambient one) sits on the
+     canvas with more depth than a single flat blur. */
+  --pc-radius: 8px;
+  --pc-radius-lg: 14px;
+  --pc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 1px rgba(0, 0, 0, 0.3);
+  --pc-shadow-2: 0 2px 6px rgba(0, 0, 0, 0.35), 0 18px 46px rgba(0, 0, 0, 0.5);
+  /* The hero's own elevation step — `--pc-shadow-2`'s depth plus a faint
+     white (the same hue as `--pc-accent`) ambient halo, at low enough
+     opacity to read as "lit from within" rather than a glow effect. Reserved
+     for exactly one surface on the whole app: the Dashboard's safe-to-spend
+     hero card (`SafeToSpendCard`, via `Surface`'s `shadow="glow"`) — never a
+     second place, or it stops reading as emphasis. */
+  --pc-shadow-glow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 22px 60px -14px rgba(255, 255, 255, 0.14),
+    0 14px 36px rgba(0, 0, 0, 0.55);
   --pc-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --pc-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }

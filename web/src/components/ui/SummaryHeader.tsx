@@ -60,7 +60,7 @@ function SummaryHeader({ stats, note, className }: SummaryHeaderProps) {
     return (
       <div
         className={cn(
-          "rounded-pc-lg border border-hairline bg-surface-1 p-4 text-sm text-ink-faint",
+          "rounded-pc-lg border border-hairline bg-surface-1 p-5 text-sm text-ink-faint",
           className,
         )}
       >
@@ -72,7 +72,7 @@ function SummaryHeader({ stats, note, className }: SummaryHeaderProps) {
   return (
     <div
       className={cn(
-        "flex flex-col gap-4 rounded-pc-lg border border-hairline bg-surface-1 p-4 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-8 sm:gap-y-4",
+        "flex flex-col gap-5 rounded-pc-lg border border-hairline bg-surface-1 p-5 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-10 sm:gap-y-5",
         className,
       )}
     >

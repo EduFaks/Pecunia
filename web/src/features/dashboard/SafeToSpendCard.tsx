@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Pencil } from "lucide-react";
 import Button from "../../components/ui/Button";
+import Card from "../../components/ui/Card";
 import TextField from "../../components/ui/TextField";
 import { amountToMinor, minorToAmountInput } from "../../lib/amount";
 import { MoneyText, usePreferences } from "../../lib/preferences";
@@ -115,14 +116,14 @@ function SafeToSpendBody({ entry, currency }: SafeToSpendBodyProps) {
   const isOver = entry.displayed_safe_minor < 0;
 
   return (
-    <div className="mt-4 min-w-0">
+    <div className="mt-5 min-w-0">
       <p className="text-xs text-ink-faint">livre pra gastar</p>
       <MoneyText
         minor={entry.displayed_safe_minor}
         currency={currency}
         variant="hero"
         flagNegative
-        className="mt-1 block text-3xl"
+        className="mt-1 block text-4xl"
       />
       {isOver ? <p className="mt-1 text-xs text-negative">você passou do limite</p> : null}
 
@@ -200,7 +201,10 @@ function SafeToSpendBody({ entry, currency }: SafeToSpendBodyProps) {
  * daily allowance, a one-line income/committed/spent breakdown, a subtle
  * note when the optional monthly budget is the binding limit, and an inline
  * "definir orçamento" editor. Loading/error/empty states mirror the sibling
- * dashboard cards (`SavingsRateCard`/`CommittedMonthlyCard`).
+ * dashboard cards (`SavingsRateCard`/`CommittedMonthlyCard`). Rendered via
+ * the shared `Card` primitive with `shadow="glow"` (Track U, Task 8) — the
+ * one surface app-wide that carries the subtle white ambient elevation, so
+ * it reads as the screen's single showpiece the instant it mounts.
  */
 function SafeToSpendCard() {
   const { base_currency, locale } = usePreferences();
@@ -210,9 +214,9 @@ function SafeToSpendCard() {
   const monthLabel = capitalize(new Intl.DateTimeFormat(locale, { month: "long" }).format(new Date()));
 
   return (
-    <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6">
+    <Card shadow="glow">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 min-w-0">
-        <h2 className="font-display text-lg text-ink">{monthLabel}</h2>
+        <h2 className="font-display text-lg font-semibold text-ink">{monthLabel}</h2>
         {entry ? (
           <span className="text-xs text-ink-faint">
             faltam {entry.days_remaining} {entry.days_remaining === 1 ? "dia" : "dias"}
@@ -221,17 +225,17 @@ function SafeToSpendCard() {
       </div>
 
       {safeToSpendQuery.isError ? (
-        <p className="mt-4 text-sm text-ink-faint">
+        <p className="mt-5 text-sm text-ink-faint">
           Não foi possível carregar seu saldo livre. Tente atualizar.
         </p>
       ) : safeToSpendQuery.isLoading ? (
-        <p className="mt-4 text-sm text-ink-2">Carregando…</p>
+        <p className="mt-5 text-sm text-ink-2">Carregando…</p>
       ) : !entry ? (
-        <p className="mt-4 text-sm text-ink-2">Sem dados para este mês ainda.</p>
+        <p className="mt-5 text-sm text-ink-2">Sem dados para este mês ainda.</p>
       ) : (
         <SafeToSpendBody entry={entry} currency={base_currency} />
       )}
-    </div>
+    </Card>
   );
 }
 

@@ -113,7 +113,7 @@ function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col gap-6" data-testid="dashboard-scroll" {...bind}>
+    <div className="flex flex-col gap-8" data-testid="dashboard-scroll" {...bind}>
       {refreshing ? (
         <div className="flex justify-center py-2">
           <Spinner label="Refreshing" size="sm" className="text-ink-2" />
