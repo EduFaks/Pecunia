@@ -23,6 +23,7 @@ from pecunia.models import (
 )
 from pecunia.services.accounts import AccountService
 from pecunia.services.banksync.provider import (
+    BankItemNotFoundError,
     FakeBankProvider,
     ProviderAccount,
     ProviderConnection,
@@ -1075,7 +1076,7 @@ async def test_replace_mappings_replaces_previous_set(db, initialized_instance):
 # --------------------------------------------------------------------------- #
 
 
-async def test_discover_annotates_linked_account_id(db, initialized_instance):
+async def test_discover_item_annotates_linked_account_id(db, initialized_instance):
     ws_id = initialized_instance["workspace_id"]
     account = await _account(db, ws_id, currency="BRL")
     connection = await _connection(db, ws_id)
@@ -1090,11 +1091,26 @@ async def test_discover_annotates_linked_account_id(db, initialized_instance):
         },
     )
     svc = BankSyncService(db, provider)
-    result = await svc.discover(ws_id)
-    assert len(result) == 1
-    accounts_by_id = {a["pluggy_account_id"]: a for a in result[0]["accounts"]}
+    result = await svc.discover_item(ws_id, "item-1")
+    assert result["item_id"] == "item-1"
+    accounts_by_id = {a["pluggy_account_id"]: a for a in result["accounts"]}
     assert accounts_by_id["acc-1"]["linked_account_id"] == account.id
     assert accounts_by_id["acc-2"]["linked_account_id"] is None
+
+
+async def test_discover_item_unknown_item_raises_bank_item_not_found_error(db, initialized_instance):
+    """Meu Pluggy's free tier has no client-wide item listing — an unknown
+    item id must propagate BankItemNotFoundError uncaught (the router maps
+    it to 404 PLUGGY_ITEM_NOT_FOUND), unlike link_account which translates
+    it into its own PluggyAccountNotFoundError contract."""
+    ws_id = initialized_instance["workspace_id"]
+    provider = FakeBankProvider(connections=[])
+    svc = BankSyncService(db, provider)
+    try:
+        await svc.discover_item(ws_id, "item-missing")
+        raise AssertionError("expected BankItemNotFoundError")
+    except BankItemNotFoundError:
+        pass
 
 
 async def test_list_connections_shapes_links_with_derived_balance(db, initialized_instance):

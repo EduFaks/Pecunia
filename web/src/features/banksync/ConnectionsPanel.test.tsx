@@ -105,7 +105,7 @@ function installFakeBackend() {
       // queries need a backend too — gated by `enabled: open`, they must not
       // actually fire until the dialog is opened (see the dedicated test below).
       if (path.startsWith("/bank-sync/discovery") && method === "GET") {
-        return Promise.resolve([]);
+        return Promise.resolve({ item_id: "item1", institution_name: "Mock Bank", status: "UPDATED", accounts: [] });
       }
       if (path.startsWith("/accounts") && method === "GET") {
         return Promise.resolve({ items: [], next_cursor: null });
@@ -175,7 +175,7 @@ describe("ConnectionsPanel", () => {
         return Promise.resolve({ items: [], next_cursor: null });
       }
       if (path.startsWith("/bank-sync/discovery") && method === "GET") {
-        return Promise.resolve([]);
+        return Promise.resolve({ item_id: "item1", institution_name: "Mock Bank", status: "UPDATED", accounts: [] });
       }
       if (path.startsWith("/accounts") && method === "GET") {
         return Promise.resolve({ items: [], next_cursor: null });
@@ -283,18 +283,35 @@ describe("ConnectionsPanel", () => {
     });
   });
 
-  it("does not fetch discovery until 'Link an account' opens the dialog", async () => {
+  it("does not fetch discovery merely by opening the dialog — only once an item id is searched", async () => {
     renderPanel();
 
     await screen.findByText("Checking");
-    expect(mockApiFetch.mock.calls.some(([path]) => path === "/bank-sync/discovery")).toBe(false);
+    expect(
+      mockApiFetch.mock.calls.some(([path]) => String(path).startsWith("/bank-sync/discovery")),
+    ).toBe(false);
 
     const linkButtons = await screen.findAllByRole("button", { name: /link an account/i });
     fireEvent.click(linkButtons[0]);
 
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    // Opening the dialog alone must not fetch discovery (Meu Pluggy's free
+    // tier has no client-wide item listing — discovery needs a submitted
+    // item id first).
+    expect(
+      mockApiFetch.mock.calls.some(([path]) => String(path).startsWith("/bank-sync/discovery")),
+    ).toBe(false);
+
+    const itemIdInput = within(dialog).getByLabelText(/item id/i);
+    fireEvent.change(itemIdInput, { target: { value: "item1" } });
+    const searchButton = within(dialog).getByRole("button", { name: /buscar contas/i });
+    fireEvent.click(searchButton);
+
     await waitFor(() => {
-      expect(mockApiFetch.mock.calls.some(([path]) => path === "/bank-sync/discovery")).toBe(true);
+      expect(
+        mockApiFetch.mock.calls.some(([path]) => String(path).startsWith("/bank-sync/discovery")),
+      ).toBe(true);
     });
   });
 
