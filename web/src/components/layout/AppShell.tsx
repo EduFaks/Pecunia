@@ -143,7 +143,9 @@ function AppShell() {
           navOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="border-b border-hairline px-6 py-5">
+        {/* Same safe-area top inset as the header — the drawer is full-height
+            (`fixed inset-y-0`) on mobile, so its top also sits under the notch. */}
+        <div className="border-b border-hairline px-6 pb-5 pt-[calc(1.25rem+env(safe-area-inset-top))] md:py-5">
           <Wordmark size="sm" withMark />
         </div>
         <nav
@@ -195,7 +197,11 @@ function AppShell() {
           screen's own `overflow-x-auto` tables / `flex-wrap` clusters /
           `truncate` text actually take effect. */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-hairline bg-surface-1 px-4 py-3 md:px-6 md:py-4">
+        {/* `pt` folds in `env(safe-area-inset-top)` so the top bar clears the
+            iPhone notch / Dynamic Island under the full-bleed
+            `black-translucent` status bar (viewport-fit=cover). `env()` is 0 on
+            desktop, and `md:py-4` overrides both at `md:+`. */}
+        <header className="flex items-center justify-between border-b border-hairline bg-surface-1 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] md:px-6 md:py-4">
           <div className="flex items-center gap-3">
             <button
               ref={toggleRef}

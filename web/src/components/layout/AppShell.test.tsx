@@ -70,6 +70,12 @@ describe("AppShell", () => {
     mockUseAuth.mockReturnValue(authState());
   });
 
+  it("pads the top bar with the iPhone safe-area inset so it clears the notch", () => {
+    renderShell("/");
+    const header = screen.getByRole("banner");
+    expect(header.className).toContain("env(safe-area-inset-top)");
+  });
+
   it("renders every nav item as a link to its real route", () => {
     renderShell("/");
     const nav = sidebarNav();
