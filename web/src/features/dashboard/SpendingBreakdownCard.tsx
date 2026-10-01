@@ -2,6 +2,33 @@ import type { DonutDatum } from "../../components/charts/chartMath";
 import { MoneyText, usePreferences } from "../../lib/preferences";
 import { CategoryChart } from "../analytics/CategoryChart";
 import { useCashflow, useSpendingByCategory } from "../analytics/useAnalytics";
+import type { AnalyticsRange } from "../analytics/useAnalytics";
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Local (viewer wall-clock) `YYYY-MM-DD` for a date — deliberately NOT UTC
+ * (unlike `period.ts`'s `computePeriodRange`): "today" here has to match the
+ * viewer's own calendar day, since this card has no explicit period selector
+ * for the user to correct a day-boundary mismatch against. */
+function toLocalIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * The current calendar month's range — `{ from: <first of this month>, to:
+ * <today> }`, both local `YYYY-MM-DD` — so the card's donut/total reflect
+ * this month's spend instead of `useSpendingByCategory`'s unranged
+ * (server-defaulted, last-12-months) window. Kept pure and exported so the
+ * month-boundary math is unit-testable without rendering the card, same
+ * rationale as `cashflowDeltaPct`.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function currentMonthRange(now: Date): AnalyticsRange {
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { from: toLocalIsoDate(firstOfMonth), to: toLocalIsoDate(now) };
+}
 
 /**
  * This month's spend vs. last month's, as a signed percent — `null` (never
@@ -46,14 +73,17 @@ function formatDelta(deltaPct: number | null, currentMinor: number): DeltaDispla
 /**
  * The dashboard's spending-breakdown card (Track U, v1.6): the base
  * currency's `CategoryChart` donut (`useSpendingByCategory`, the same shared
- * component/data Insights and the legacy dashboard graph use), this month's
- * total (Σ positive category spend), and a "vs mês passado" comparison
- * against the prior month's total spend (`useCashflow`, oldest-first —
- * the last two points are this month and last month).
+ * component/data Insights and the legacy dashboard graph use) scoped to the
+ * **current calendar month** via `currentMonthRange` (the card has no period
+ * selector of its own, so it isn't the hook's unranged last-12-months
+ * default), this month's total (Σ positive category spend), and a "vs mês
+ * passado" comparison against the prior month's total spend (`useCashflow`,
+ * deliberately left UNRANGED — oldest-first, the last two dense points are
+ * this month and last month; range-scoping it would break the delta).
  */
 function SpendingBreakdownCard() {
   const { base_currency, locale } = usePreferences();
-  const categoryQuery = useSpendingByCategory();
+  const categoryQuery = useSpendingByCategory({ range: currentMonthRange(new Date()) });
   const cashflowQuery = useCashflow();
 
   const categoryData: DonutDatum[] = (categoryQuery.data ?? []).map((row) => ({
@@ -86,7 +116,7 @@ function SpendingBreakdownCard() {
       ) : isLoading ? (
         <p className="mt-5 text-sm text-ink-2">Carregando…</p>
       ) : isEmpty ? (
-        <p className="mt-5 text-sm text-ink-2">Nenhum gasto neste mês ainda.</p>
+        <p className="mt-5 text-sm text-ink-2">Sem gastos neste mês ainda.</p>
       ) : (
         <div className="mt-5 min-w-0">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 min-w-0">
