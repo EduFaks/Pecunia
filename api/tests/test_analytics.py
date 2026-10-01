@@ -1151,6 +1151,12 @@ async def test_safe_to_spend_endpoint_returns_per_currency_shape(client, db, ini
         "safe_minor", "displayed_safe_minor", "limited_by", "expected_income_minor",
         "committed_remaining_minor", "spent_mtd_minor", "monthly_budget_minor",
         "days_remaining", "daily_allowance_minor",
+        "committed_cards_minor", "committed_other_minor",
+        "projected_income_minor", "projected_expense_minor",
     } <= set(brl)
     assert brl["expected_income_minor"] == 50_000
     assert brl["limited_by"] in ("income", "budget")
+    assert brl["committed_cards_minor"] == 0
+    assert brl["committed_other_minor"] == brl["committed_remaining_minor"]
+    assert brl["projected_income_minor"] == brl["expected_income_minor"]
+    assert brl["projected_expense_minor"] == brl["spent_mtd_minor"] + brl["committed_remaining_minor"]
