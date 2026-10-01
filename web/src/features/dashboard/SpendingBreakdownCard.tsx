@@ -77,7 +77,7 @@ function SpendingBreakdownCard() {
 
   return (
     <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6 min-w-0">
-      <h2 className="font-display text-lg text-ink">Gastos por categoria</h2>
+      <h2 className="font-display text-lg text-ink">Gastei em quê</h2>
 
       {isError ? (
         <p className="mt-5 text-sm text-ink-faint">

@@ -191,7 +191,7 @@ describe("AccountsCardsCard", () => {
 
     renderCard();
 
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByText(/carregando/i)).toBeInTheDocument();
   });
 
   it("shows an error state when the fetch fails", async () => {
@@ -204,13 +204,13 @@ describe("AccountsCardsCard", () => {
 
     renderCard();
 
-    expect(await screen.findByText(/couldn't load/i)).toBeInTheDocument();
+    expect(await screen.findByText(/não foi possível/i)).toBeInTheDocument();
   });
 
   it("shows a calm empty state with no accounts", async () => {
     mockFixture({ accounts: [] });
     renderCard();
 
-    expect(await screen.findByText(/no accounts yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nenhuma conta ainda/i)).toBeInTheDocument();
   });
 });

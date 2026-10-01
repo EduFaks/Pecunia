@@ -56,23 +56,23 @@ function AccountsCardsCard() {
   return (
     <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-lg text-ink">Accounts & cards</h2>
+        <h2 className="font-display text-lg text-ink">Contas e cartões</h2>
         <Link
           to="/accounts"
           className="font-sans text-sm text-accent transition-colors duration-150 ease-pc hover:text-accent-hover"
         >
-          View all
+          Ver tudo
         </Link>
       </div>
 
       {isError ? (
         <p className="mt-5 text-sm text-ink-faint">
-          Couldn't load your accounts. Try refreshing.
+          Não foi possível carregar suas contas. Tente atualizar.
         </p>
       ) : isLoading ? (
-        <p className="mt-5 text-sm text-ink-2">Loading…</p>
+        <p className="mt-5 text-sm text-ink-2">Carregando…</p>
       ) : accounts.length === 0 ? (
-        <p className="mt-5 text-sm text-ink-2">No accounts yet.</p>
+        <p className="mt-5 text-sm text-ink-2">Nenhuma conta ainda.</p>
       ) : (
         <ul className="mt-5 flex flex-col divide-y divide-hairline">
           {accounts.map((account) => {
@@ -108,7 +108,7 @@ function AccountsCardsCard() {
                     aria-valuenow={Math.round(usage.percent)}
                     aria-valuemin={0}
                     aria-valuemax={100}
-                    aria-label={`${account.name} credit used`}
+                    aria-label={`${account.name}: limite usado`}
                     className="h-2 w-full overflow-hidden rounded-full bg-surface-2"
                   >
                     <div

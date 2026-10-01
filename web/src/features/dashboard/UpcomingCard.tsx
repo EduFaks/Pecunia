@@ -48,14 +48,14 @@ function UpcomingCard() {
 
   return (
     <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6">
-      <h2 className="font-display text-lg text-ink">Next 14 days</h2>
+      <h2 className="font-display text-lg text-ink">Próximos 14 dias</h2>
 
       {isError ? (
         <p className="mt-5 text-sm text-ink-faint">
-          Couldn't load what's upcoming. Try refreshing.
+          Não foi possível carregar os próximos vencimentos. Tente atualizar.
         </p>
       ) : isLoading ? (
-        <p className="mt-5 text-sm text-ink-2">Loading…</p>
+        <p className="mt-5 text-sm text-ink-2">Carregando…</p>
       ) : upcoming.length === 0 ? (
         <p className="mt-5 text-sm text-ink-2">nada nos próximos 14 dias</p>
       ) : (

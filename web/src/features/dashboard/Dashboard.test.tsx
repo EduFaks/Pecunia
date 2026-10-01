@@ -176,9 +176,9 @@ describe("Dashboard", () => {
     expect(headings.length).toBeGreaterThanOrEqual(5);
     expect(headings[0].textContent).not.toBe("");
     expect(headings[1]).toHaveTextContent(/resultado do mês/i);
-    expect(headings[2]).toHaveTextContent(/gastos por categoria/i);
-    expect(headings[3]).toHaveTextContent(/next 14 days/i);
-    expect(headings[4]).toHaveTextContent(/accounts & cards/i);
+    expect(headings[2]).toHaveTextContent(/gastei em quê/i);
+    expect(headings[3]).toHaveTextContent(/próximos 14 dias/i);
+    expect(headings[4]).toHaveTextContent(/contas e cartões/i);
 
     // SafeToSpendCard's own markers (its heading text is the dynamic month name).
     expect(await screen.findByRole("progressbar", { name: /gasto do mês/i })).toBeInTheDocument();
@@ -200,9 +200,9 @@ describe("Dashboard", () => {
     expect(screen.queryByText(/income vs spend/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Goals" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Recent activity" })).not.toBeInTheDocument();
-    // "Accounts" (the old snapshot) must not appear — only "Accounts & cards" should.
+    // "Accounts" (the old snapshot) must not appear — only "Contas e cartões" should.
     expect(screen.queryByRole("heading", { name: "Accounts" })).not.toBeInTheDocument();
-    // "Upcoming" (the old 30-day widget) must not appear — only "Next 14 days" should.
+    // "Upcoming" (the old 30-day widget) must not appear — only "Próximos 14 dias" should.
     expect(screen.queryByRole("heading", { name: "Upcoming" })).not.toBeInTheDocument();
   });
 

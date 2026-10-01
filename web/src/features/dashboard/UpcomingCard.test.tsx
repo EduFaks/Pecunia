@@ -144,7 +144,7 @@ describe("UpcomingCard", () => {
 
     renderCard();
 
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByText(/carregando/i)).toBeInTheDocument();
   });
 
   it("shows an error state when the fetch fails", async () => {
@@ -157,6 +157,6 @@ describe("UpcomingCard", () => {
 
     renderCard();
 
-    expect(await screen.findByText(/couldn't load/i)).toBeInTheDocument();
+    expect(await screen.findByText(/não foi possível/i)).toBeInTheDocument();
   });
 });
