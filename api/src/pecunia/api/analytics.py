@@ -206,7 +206,7 @@ class ProjectionOut(BaseModel):
     variable_lookback_months: int
 
 
-class DebtPayoutOut(BaseModel):
+class DebtPayoffOut(BaseModel):
     loan_id: uuid.UUID
     name: str
     remaining_minor: int
@@ -349,7 +349,7 @@ async def projection(
 async def debt_payoffs(
     db: Annotated[AsyncSession, Depends(get_db)],
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
-) -> list[DebtPayoutOut]:
+) -> list[DebtPayoffOut]:
     # A pure read (nothing captured/persisted); the wall clock lives here so
     # the service stays clock-free (§4).
     return await ProjectionService(db).debt_payoffs(wsctx.workspace_id, today=_today())

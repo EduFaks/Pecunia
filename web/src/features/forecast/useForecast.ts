@@ -67,7 +67,7 @@ export interface Projection {
 }
 
 /** One borrowed loan's projected payoff ETA under its current planned
- * payment, no interest modeled — mirrors `DebtPayoutOut`
+ * payment, no interest modeled — mirrors `DebtPayoffOut`
  * (`api/src/pecunia/api/analytics.py`). `payoff_date`/`payments_left` are
  * both `null` when the loan isn't projected to clear within the server's
  * horizon at this pace. */

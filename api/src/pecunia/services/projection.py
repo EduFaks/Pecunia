@@ -417,10 +417,35 @@ class ProjectionService:
                 labels[currency][idx].append({"label": name, "amount_minor": bill})
 
     async def _cash_start(self, workspace_id: uuid.UUID) -> dict[str, int]:
-        """Current summed account balance per currency — mirrors
-        `ForecastService._cash_start` exactly (per-account
-        `AccountService.balance`, grouped by currency)."""
-        accounts = (await self.db.execute(scoped_select(Account, workspace_id))).scalars().all()
+        """Current summed account balance per currency — per-account
+        `AccountService.balance`, grouped by currency, EXCLUDING credit
+        cards.
+
+        This DELIBERATELY diverges from `ForecastService._cash_start`
+        (which sums every account, cards included, with no exclusion).
+        `ForecastService` never folds a card's bill as a separate outflow,
+        so its card balance is the only place that debt shows up — summing
+        it is correct there.
+
+        Here it is not: a linked card's Pecunia balance is ANCHORED to the
+        provider's reported balance, which is stored NEGATIVE (the amount
+        owed) — so an unpaid card already contributes its full debt as a
+        negative term if included here. `_fold_card_bills` then subtracts
+        that exact same statement AGAIN as a one-time outflow at its due
+        date (`bill = max(0, abs(provider_balance_minor) - card_spend_mtd)`).
+        In a running-balance walk (unlike a flow-only computation such as
+        `SafeToSpendService`, which has no balance term to collide with)
+        summing the card's balance here and folding its bill later double-
+        counts the same debt, understating every projected month by the
+        full statement amount per linked card. A credit card is a debt plus
+        an upcoming bill — modeled by `_fold_card_bills` and the variable
+        band — not a liquid cash account, so it is excluded from the cash
+        start entirely and left to those two places alone."""
+        accounts = (
+            await self.db.execute(
+                scoped_select(Account, workspace_id).where(Account.type != "credit_card")
+            )
+        ).scalars().all()
         account_service = AccountService(self.db)
         totals: dict[str, int] = {}
         for account in accounts:

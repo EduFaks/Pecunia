@@ -16,6 +16,7 @@ from pecunia.models import (
     WorkspaceMembership,
 )
 from pecunia.period import month_end, shift_month
+from pecunia.services.accounts import AccountService
 from pecunia.services.projection import ProjectionService
 from pecunia.services.transfers import TransferService
 
@@ -128,6 +129,18 @@ async def _card_link(
     )
     db.add(link)
     await db.flush()
+    # Anchor the card ACCOUNT's own balance to the provider balance, the same
+    # adjustment `BankSyncService.link_account` applies right after import
+    # (`account.initial_balance_minor += provider_balance_minor -
+    # derived_balance`) — in production a linked credit card's Pecunia
+    # balance is NEVER left sitting at an un-anchored 0; it mirrors the
+    # (negative, i.e. owed) provider balance. Skipping this anchor is what
+    # masked the double-counting bug: every card test ran with the card
+    # contributing 0 to `_cash_start`, a state the sync pipeline never
+    # produces.
+    derived_balance = int(await AccountService(db).balance(account))
+    account.initial_balance_minor += provider_balance_minor - derived_balance
+    await db.flush()
     return link
 
 
@@ -239,6 +252,28 @@ async def test_card_spend_mtd_excludes_transfer_legs(db, initialized_instance):
 
     # Without the fix this would be 1_300_000 - 70_000 = 1_230_000.
     assert result["USD"]["points"][0]["components"]["card_bills_minor"] == 1_300_000 - 20_000
+
+
+async def test_linked_card_debt_is_not_double_counted_in_cash_start(db, initialized_instance):
+    # A linked credit card's Pecunia balance is ANCHORED to the provider
+    # balance (negative = owed) — `_cash_start` must exclude it, because
+    # `_fold_card_bills` already subtracts that same statement once as a
+    # one-time outflow. Counting the card's balance IN `_cash_start` too
+    # would subtract the debt twice.
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD", initial=1_000)
+    card = await _card_account(db, ws_id, currency="USD")
+    # Anchored to -300 (owing 300), no spend yet this month -> the full 300
+    # bill is due next month.
+    await _card_link(db, ws_id, card, provider_balance_minor=-300, bill_due_date=date(2026, 8, 20))
+
+    result = await ProjectionService(db).project(ws_id, today=TODAY, months=1)
+    points = result["USD"]["points"]
+
+    # Liquid cash (1_000 — the card is NOT a cash account) minus the bill
+    # (300), ONCE. Double-counting would give
+    # 1_000 + (-300 card balance) - 300 (bill) = 400.
+    assert points[0]["optimistic_minor"] == 700
 
 
 async def test_zero_card_bill_produces_no_label(db, initialized_instance):
@@ -619,6 +654,23 @@ async def test_debt_payoff_weekly_loan_uses_24_month_calendar_horizon(db, initia
     assert len(result) == 1
     assert result[0]["payments_left"] == 40
     assert result[0]["payoff_date"] == date(2027, 6, 20)
+
+
+async def test_debt_payoff_already_paid_off_reports_zero_payments_left_today(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    loan = await _loan(
+        db, ws_id, name="PaidOff", principal=1_000, planned_payment=100,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+    # Payments already meet/exceed the principal -> remaining_minor <= 0,
+    # nothing left to pay off.
+    await _payment(db, ws_id, loan, amount=1_000, paid_on=date(2026, 9, 1))
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert result[0]["remaining_minor"] == 0
+    assert result[0]["payments_left"] == 0
+    assert result[0]["payoff_date"] == TODAY
 
 
 async def test_debt_payoff_carries_currency_per_loan(db, initialized_instance):
