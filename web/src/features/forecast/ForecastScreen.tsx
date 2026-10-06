@@ -1,12 +1,23 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import Card from "../../components/ui/Card";
 import { focusRingClass } from "../../components/ui/a11y";
 import { cn } from "../../lib/cn";
-import { DateText, usePreferences } from "../../lib/preferences";
+import { DateText, MoneyText, usePreferences } from "../../lib/preferences";
 import { ChartEmpty, GraphCard } from "../analytics/GraphCard";
+import { biggestCardBillLabel, findPointByDate } from "./forecastCopy";
+import MonthBreakdown from "./MonthBreakdown";
 import { ProjectionChart } from "./ProjectionChart";
 import { useProjection } from "./useForecast";
 import type { Projection } from "./useForecast";
+
+/** The lone inflow sign glyph the recovery tile's "De volta ao azul" amount
+ * carries — same `SIGN_POSITIVE`/manual-glyph idiom `SafeToSpendCard` and
+ * `MonthBreakdown` already use, since `recovery.value_minor` is always >= 0
+ * (by definition: it's the balance the day it climbs back out of the red)
+ * and `Intl`'s currency formatting never prints a "+" for a positive
+ * amount on its own. */
+const SIGN_POSITIVE = "+";
 
 /** The horizon toggle's two options — the only two the brief/endpoint's
  * `months` contract (`ge=1,le=24`) are asked to offer here. */
@@ -99,15 +110,100 @@ function RunwayHero({ projection }: { projection: Projection }) {
 }
 
 /**
+ * The "menor saldo" stat tile (Task 4): `lowest_point.value_minor`
+ * (`flagNegative` — a plain balance that may dip below zero, not a delta,
+ * so never green-by-default) + its `DateText`, plus a short "após fatura
+ * <label>" note when that same month also carries a credit-card bill —
+ * naming the BIGGEST one when a month folds in more than one card
+ * (`biggestCardBillLabel`). `lowest_point.date` doesn't always match one of
+ * `projection.points` (it can be TODAY's seeded actual balance when today is
+ * already the series' minimum, same caveat `ProjectionChart`'s reference dot
+ * documents), so the note is simply omitted when no matching point — or no
+ * bill at all — is found.
+ */
+function LowestPointTile({ projection, currency }: { projection: Projection; currency: string }) {
+  const { lowest_point } = projection;
+  const point = findPointByDate(projection.points, lowest_point.date);
+  const cardBill = point ? biggestCardBillLabel(point.card_bill_labels) : undefined;
+
+  return (
+    <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6 min-w-0">
+      <p className="text-xs text-ink-faint">menor saldo</p>
+      <p className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 min-w-0">
+        <MoneyText
+          minor={lowest_point.value_minor}
+          currency={currency}
+          variant="hero"
+          flagNegative
+          className="text-2xl"
+        />
+        <DateText iso={lowest_point.date} className="text-sm text-ink-faint" />
+      </p>
+      {cardBill ? (
+        <p className="mt-1 text-xs text-ink-faint">após fatura {cardBill.label}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The "recuperação" stat tile (Task 4) — three mutually exclusive states,
+ * all read off `Projection`:
+ *
+ * - `recovery !== null`: "De volta ao azul" + the rolled `DateText` + the
+ *   signed, emerald `recovery.value_minor` — a genuine state transition
+ *   (climbing back out of the red), so it earns the explicit "+" glyph and
+ *   `text-positive` the same way a real gain/delta does elsewhere.
+ * - `recovery === null` and the realistic line never dips below zero at all
+ *   (`runway_months === null` AND `lowest_point.value_minor >= 0`, the same
+ *   pair `RunwayHero` reads for its own "no risk" branch): a reassuring
+ *   one-liner, deliberately PLAIN ink — mirrors `RunwayHero`'s own positive
+ *   case, which stays uncolored too (CONVENTIONS §9.1 reserves emerald for
+ *   real movement, and "nothing happened" isn't movement).
+ * - `recovery === null` otherwise: the dip is real but never climbs back
+ *   within the projected horizon — a muted, deliberately uncelebratory line.
+ */
+function RecoveryTile({ projection, currency }: { projection: Projection; currency: string }) {
+  const { recovery, runway_months, lowest_point } = projection;
+
+  let body: ReactNode;
+  if (recovery) {
+    body = (
+      <>
+        <p className="mt-2 font-display text-base text-ink">De volta ao azul</p>
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 min-w-0">
+          <DateText iso={recovery.date} className="text-sm text-ink-2" />
+          <span className="text-positive">
+            {SIGN_POSITIVE}
+            <MoneyText minor={recovery.value_minor} currency={currency} className="text-sm" />
+          </span>
+        </p>
+      </>
+    );
+  } else if (runway_months === null && lowest_point.value_minor >= 0) {
+    body = <p className="mt-2 text-sm text-ink-2">Caixa positivo o período todo</p>;
+  } else {
+    body = <p className="mt-2 text-sm text-ink-faint">sem recuperação prevista no período</p>;
+  }
+
+  return (
+    <div className="rounded-pc-lg border border-hairline bg-surface-1 p-6 min-w-0">
+      <p className="text-xs text-ink-faint">recuperação</p>
+      {body}
+    </div>
+  );
+}
+
+/**
  * The forecast tab (`/forecast`, Track V) — "is my cash going to run out,
  * and when" for the workspace's **base currency**. A 6/12-month horizon
  * toggle drives `useProjection(months)`; the result renders a runway hero
  * (`RunwayHero`, above) and the headline two-line chart (`ProjectionChart`).
  *
- * Tasks 4 and 5 add the remaining sections directly below the chart: a KPI
- * tile row + per-month component breakdown (Task 4), and the debt-payoff
- * list via `useDebtPayoffs` (Task 5) — neither is implemented here; this
- * screen only builds the shell, nav, hero, and chart.
+ * Below the chart: the lowest-point/recovery stat tiles and the per-month
+ * `MonthBreakdown` ("o que compõe") — Task 4. Task 5 still owes the
+ * debt-payoff list via `useDebtPayoffs` (`./useForecast`) — not implemented
+ * here.
  */
 function ForecastScreen() {
   const { base_currency, locale } = usePreferences();
@@ -161,9 +257,23 @@ function ForecastScreen() {
             />
           </GraphCard>
 
-          {/* Task 4 slot: KPI tile row (runway/lowest-point/variable-spend
-              figures) + a per-month `components` breakdown chart, both driven
-              by this same `projection` — not implemented here. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <LowestPointTile projection={projection} currency={base_currency} />
+            <RecoveryTile projection={projection} currency={base_currency} />
+          </div>
+
+          {/* `key={horizon}` remounts the breakdown (resetting its own
+              selected-month state) whenever the horizon toggle swaps in a
+              brand-new `points` array, rather than leaving a now-stale
+              selected date selected against the new series. */}
+          <MonthBreakdown
+            key={horizon}
+            points={projection.points}
+            lowestPointDate={projection.lowest_point.date}
+            variableLookbackMonths={projection.variable_lookback_months}
+            currency={base_currency}
+            locale={locale}
+          />
 
           {/* Task 5 slot: the debt-payoff list, driven by `useDebtPayoffs()`
               from `./useForecast` — not implemented here. */}
