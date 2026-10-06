@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Settings,
   Target,
+  TrendingUp,
   Users,
   Wallet,
   X,
@@ -37,7 +38,7 @@ interface NavItem {
 
 /** Sidebar nav, wired to the real routes `App.tsx` mounts under `AppShell`,
  * grouped under small non-clickable section headers (the Settings sub-nav's
- * uppercase tracked muted label idiom) so 14 items scan without extra
+ * uppercase tracked muted label idiom) so 15 items scan without extra
  * clicks. A `null` section renders no header — the final Activity/Settings
  * group, pinned to the sidebar's bottom via `mt-auto`. `end: true` on
  * Dashboard keeps it from matching every nested path the way an unqualified
@@ -72,6 +73,7 @@ const NAV_GROUPS: { section: string | null; items: NavItem[] }[] = [
   {
     section: "Plan",
     items: [
+      { label: "Previsão", to: "/forecast", end: false, icon: TrendingUp },
       { label: "Goals", to: "/goals", end: false, icon: PiggyBank },
       { label: "Contacts", to: "/contacts", end: false, icon: Users },
       { label: "Projects", to: "/projects", end: false, icon: FolderKanban },
