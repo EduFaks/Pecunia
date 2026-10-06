@@ -163,6 +163,73 @@ async def test_fetch_connection_maps_item_fields():
     )
 
 
+async def test_expired_api_key_403_triggers_reauth_then_succeeds():
+    """Pluggy rejects an expired/invalid apiKey with HTTP 403
+    (codeDescription API_KEY_MISSING_OR_INVALID), NOT 401 — the provider must
+    re-auth once on that signal and retry, exactly as it does for a 401."""
+    calls = {"auth": 0, "item": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            calls["auth"] += 1
+            return httpx.Response(200, json={"apiKey": f"key-{calls['auth']}"})
+        calls["item"] += 1
+        if calls["item"] == 1:
+            return httpx.Response(
+                403,
+                json={
+                    "code": 403,
+                    "codeDescription": "API_KEY_MISSING_OR_INVALID",
+                    "message": "Missing or invalid authorization token",
+                },
+            )
+        return httpx.Response(200, json={"id": "item-1", "status": "UPDATED"})
+
+    provider = _provider(handler)
+    result = await provider.fetch_connection("item-1")
+    assert result.item_id == "item-1"
+    assert calls["auth"] == 2  # initial + one re-auth on the 403
+    assert calls["item"] == 2  # failed once, retried once
+
+
+async def test_persistent_api_key_403_raises_after_one_reauth():
+    """A second API_KEY 403 after re-auth must surface as BankProviderError,
+    never loop."""
+    calls = {"auth": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            calls["auth"] += 1
+            return httpx.Response(200, json={"apiKey": "key"})
+        return httpx.Response(
+            403, json={"code": 403, "codeDescription": "API_KEY_MISSING_OR_INVALID"}
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connection("item-1")
+    assert calls["auth"] == 2  # exactly one re-auth, no infinite loop
+
+
+async def test_non_apikey_403_does_not_trigger_reauth():
+    """A 403 for any OTHER reason (feature/consent block) is NOT an auth
+    failure — it must raise without re-authing."""
+    calls = {"auth": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            calls["auth"] += 1
+            return httpx.Response(200, json={"apiKey": "key"})
+        return httpx.Response(
+            403, json={"code": 403, "codeDescription": "FEATURE_NOT_ENABLED"}
+        )
+
+    provider = _provider(handler)
+    with pytest.raises(BankProviderError):
+        await provider.fetch_connection("item-1")
+    assert calls["auth"] == 1  # no re-auth for a non-apikey 403
+
+
 async def test_fetch_connection_falls_back_to_empty_institution_name():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/auth":

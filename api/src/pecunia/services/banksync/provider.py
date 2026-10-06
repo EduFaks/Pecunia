@@ -37,6 +37,29 @@ PLUGGY_BASE_URL = "https://api.pluggy.ai"
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 0.5
 
+# Pluggy rejects a missing/expired/invalid apiKey with HTTP 403 and this body
+# code (verified live) — NOT 401. So an expired cached key surfaces as 403,
+# and the provider must re-auth on it just as it would on a 401, or every call
+# fails forever once the ~2h key expires (until the process restarts). A 403
+# for any OTHER reason (feature/consent block) is left alone.
+_API_KEY_FAILURE_CODE = "API_KEY_MISSING_OR_INVALID"
+
+
+def _is_api_key_failure(response: httpx.Response) -> bool:
+    """True when Pluggy is rejecting the apiKey itself (so re-auth may help):
+    HTTP 401, or a 403 whose JSON body's `codeDescription` is
+    `API_KEY_MISSING_OR_INVALID`. Any other 403 is a real authorization/
+    feature block, not a stale key, and must NOT trigger a re-auth."""
+    if response.status_code == 401:
+        return True
+    if response.status_code == 403:
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        return isinstance(body, dict) and body.get("codeDescription") == _API_KEY_FAILURE_CODE
+    return False
+
 # A hard ceiling on pages followed for one _get_paged call — guards against a
 # cursor that keeps legitimately advancing but never actually terminates
 # (finding 9). 200 pages is comfortably beyond any personal-scale workspace's
@@ -211,9 +234,11 @@ class PluggyProvider:
             if self._api_key is None:
                 await self._auth()
             response = await self._request(path, params)
-            if response.status_code == 401:
-                # Key expired (or was never valid) — re-auth once and retry;
-                # a second 401 falls through to raise_for_status() below.
+            if _is_api_key_failure(response):
+                # Key expired (or was never valid) — re-auth once and retry; a
+                # second failure falls through to raise_for_status() below (we
+                # never loop). Pluggy signals this with 401 OR a 403 whose body
+                # code is API_KEY_MISSING_OR_INVALID (see _is_api_key_failure).
                 self._api_key = None
                 await self._auth()
                 response = await self._request(path, params)
