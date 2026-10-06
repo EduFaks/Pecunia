@@ -285,10 +285,20 @@ async def test_totals_sum_active_per_currency(db, initialized_instance):
     await svc.set_status(canceled, "canceled")
 
     totals = await svc.totals(ws_id, status="active")
-    assert totals["USD"] == {"monthly_minor": 2000, "annual_minor": 24000, "count": 2}
-    assert totals["EUR"] == {"monthly_minor": 500, "annual_minor": 6000, "count": 1}
+    # Verify rollup fields are unchanged (by_category is new and purely additive)
+    assert totals["USD"]["monthly_minor"] == 2000
+    assert totals["USD"]["annual_minor"] == 24000
+    assert totals["USD"]["count"] == 2
+    assert totals["EUR"]["monthly_minor"] == 500
+    assert totals["EUR"]["annual_minor"] == 6000
+    assert totals["EUR"]["count"] == 1
     # EUR never folds into USD — buckets stay their own currency.
     assert set(totals) == {"USD", "EUR"}
+    # Verify by_category structure exists
+    assert "by_category" in totals["USD"]
+    assert "by_category" in totals["EUR"]
+    assert isinstance(totals["USD"]["by_category"], list)
+    assert isinstance(totals["EUR"]["by_category"], list)
 
 
 async def test_set_status_toggles_and_drops_from_totals(db, initialized_instance):

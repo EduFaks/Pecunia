@@ -349,21 +349,48 @@ class SubscriptionService:
 
     async def totals(
         self, workspace_id: uuid.UUID, *, status: str = SubscriptionStatus.ACTIVE.value
-    ) -> dict[str, dict[str, int]]:
+    ) -> dict[str, dict]:
         """Σ of the normalized monthly + annual cost of every subscription with
         `status`, bucketed per currency: `{currency: {monthly_minor,
-        annual_minor, count}}`. Money is never summed across currencies — a EUR
-        subscription stays in its own EUR bucket."""
+        annual_minor, count, by_category}}`. `by_category` splits the same
+        figures per category (category_id None = uncategorized bucket, name
+        None). Money is never summed across currencies (§4)."""
         stmt = scoped_select(Subscription, workspace_id).where(
             Subscription.status == status
         )
         rows = (await self.db.execute(stmt)).scalars().all()
-        out: dict[str, dict[str, int]] = {}
+
+        cat_rows = (
+            await self.db.execute(scoped_select(Category, workspace_id))
+        ).scalars().all()
+        name_by_id = {c.id: c.name for c in cat_rows}
+
+        out: dict[str, dict] = {}
+        # (currency, category_id) -> accumulator, so each currency's by_category
+        # is built alongside its rollup in one pass.
+        per_cat: dict[str, dict[uuid.UUID | None, dict]] = {}
         for sub in rows:
+            m = monthly_minor(sub.amount_minor, sub.billing_frequency)
+            a = annual_minor(sub.amount_minor, sub.billing_frequency)
             bucket = out.setdefault(
-                sub.currency, {"monthly_minor": 0, "annual_minor": 0, "count": 0}
+                sub.currency, {"monthly_minor": 0, "annual_minor": 0, "count": 0, "by_category": []}
             )
-            bucket["monthly_minor"] += monthly_minor(sub.amount_minor, sub.billing_frequency)
-            bucket["annual_minor"] += annual_minor(sub.amount_minor, sub.billing_frequency)
+            bucket["monthly_minor"] += m
+            bucket["annual_minor"] += a
             bucket["count"] += 1
+            cat_bucket = per_cat.setdefault(sub.currency, {}).setdefault(
+                sub.category_id,
+                {"category_id": sub.category_id, "name": None, "monthly_minor": 0, "annual_minor": 0, "count": 0},
+            )
+            cat_bucket["name"] = name_by_id.get(sub.category_id) if sub.category_id is not None else None
+            cat_bucket["monthly_minor"] += m
+            cat_bucket["annual_minor"] += a
+            cat_bucket["count"] += 1
+        for currency, bucket in out.items():
+            # Largest category first; uncategorized sorts by the same key.
+            bucket["by_category"] = sorted(
+                per_cat.get(currency, {}).values(),
+                key=lambda c: c["monthly_minor"],
+                reverse=True,
+            )
         return out

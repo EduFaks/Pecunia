@@ -122,10 +122,19 @@ class SubscriptionPage(BaseModel):
     next_cursor: str | None
 
 
+class CategorySubtotal(BaseModel):
+    category_id: uuid.UUID | None
+    name: str | None
+    monthly_minor: int
+    annual_minor: int
+    count: int
+
+
 class CurrencyTotal(BaseModel):
     monthly_minor: int
     annual_minor: int
     count: int
+    by_category: list[CategorySubtotal]
 
 
 def _raise_validation(exc: Exception) -> None:
