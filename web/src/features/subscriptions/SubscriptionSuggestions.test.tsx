@@ -16,6 +16,7 @@ const base: SubscriptionSuggestion = {
   last_seen: "2026-09-05",
   suggested_next_renewal: "2026-10-05",
   suggested_category_id: null,
+  suggested_account_id: null,
 };
 
 function renderWithProvider(component: React.ReactElement) {

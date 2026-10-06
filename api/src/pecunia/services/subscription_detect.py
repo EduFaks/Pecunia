@@ -91,6 +91,7 @@ class DetectTxn:
     amount_minor: int  # signed; a charge is negative
     occurred_on: date
     category_id: uuid.UUID | None
+    account_id: uuid.UUID  # every imported transaction has one — NOT NULL
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ class SubscriptionCandidate:
     last_seen: date
     suggested_next_renewal: date
     suggested_category_id: uuid.UUID | None
+    suggested_account_id: uuid.UUID | None
 
 
 def _representative_amount(magnitudes: list[int]) -> int:
@@ -198,6 +200,10 @@ def detect_candidates(
         last_seen = kept_sorted[-1].occurred_on
         cat_counts = Counter(r.category_id for r in kept if r.category_id is not None)
         suggested_category_id = cat_counts.most_common(1)[0][0] if cat_counts else None
+        # account_id is NOT NULL on every imported transaction, so with ≥2 kept
+        # rows there's always a modal account — same Counter idiom as above.
+        acct_counts = Counter(r.account_id for r in kept)
+        suggested_account_id = acct_counts.most_common(1)[0][0]
         candidates.append(
             SubscriptionCandidate(
                 merchant=label,
@@ -210,6 +216,7 @@ def detect_candidates(
                 last_seen=last_seen,
                 suggested_next_renewal=period.advance(last_seen, freq),
                 suggested_category_id=suggested_category_id,
+                suggested_account_id=suggested_account_id,
             )
         )
     candidates.sort(key=lambda c: c.amount_minor, reverse=True)
@@ -248,6 +255,7 @@ class SubscriptionDetector:
                 amount_minor=r.amount_minor,
                 occurred_on=r.occurred_on,
                 category_id=r.category_id,
+                account_id=r.account_id,
             )
             for r in rows
         ]

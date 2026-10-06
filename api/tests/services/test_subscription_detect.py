@@ -8,18 +8,22 @@ from pecunia.services.subscription_detect import (
     normalize_description,
 )
 
+# Fixed default so every existing call site that doesn't care about
+# suggested_account_id keeps passing without naming an account explicitly.
+_ACCOUNT = uuid.uuid4()
 
-def _txn(merchant, amount_minor, day, *, currency="BRL", category_id=None):
+
+def _txn(merchant, amount_minor, day, *, currency="BRL", category_id=None, account_id=_ACCOUNT):
     return DetectTxn(
         merchant=merchant, description=merchant or "", currency=currency, amount_minor=amount_minor,
-        occurred_on=day, category_id=category_id,
+        occurred_on=day, category_id=category_id, account_id=account_id,
     )
 
 
-def _txn_desc(description, amount_minor, day, *, currency="BRL", category_id=None):
+def _txn_desc(description, amount_minor, day, *, currency="BRL", category_id=None, account_id=_ACCOUNT):
     return DetectTxn(
         merchant=None, description=description, currency=currency, amount_minor=amount_minor,
-        occurred_on=day, category_id=category_id,
+        occurred_on=day, category_id=category_id, account_id=account_id,
     )
 
 
@@ -93,6 +97,31 @@ def test_existing_active_subscription_excluded():
     ]
     existing = [ExistingSub(name="Netflix", currency="BRL", amount_minor=1990, billing_frequency="monthly")]
     assert detect_candidates(txns, today=date(2026, 10, 6), existing=existing) == []
+
+
+def test_suggested_account_id_is_set_from_kept_rows():
+    out = detect_candidates(
+        [
+            _txn("Netflix", -1990, date(2026, 7, 5)),
+            _txn("Netflix", -1990, date(2026, 8, 5)),
+            _txn("Netflix", -1990, date(2026, 9, 5)),
+        ],
+        today=date(2026, 10, 6),
+        existing=[],
+    )
+    assert out[0].suggested_account_id == _ACCOUNT
+
+
+def test_suggested_account_id_is_group_mode():
+    acct_a = uuid.uuid4()
+    acct_b = uuid.uuid4()
+    txns = [
+        _txn("Netflix", -1990, date(2026, 7, 5), account_id=acct_a),
+        _txn("Netflix", -1990, date(2026, 8, 5), account_id=acct_a),
+        _txn("Netflix", -1990, date(2026, 9, 5), account_id=acct_b),
+    ]
+    out = detect_candidates(txns, today=date(2026, 10, 6), existing=[])
+    assert out[0].suggested_account_id == acct_a
 
 
 def test_suggested_category_is_group_mode():

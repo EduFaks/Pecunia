@@ -157,6 +157,7 @@ function SubscriptionsScreen() {
         billing_frequency: s.billing_frequency,
         next_renewal: s.suggested_next_renewal,
         category_id: s.suggested_category_id,
+        account_id: s.suggested_account_id,
       },
     });
   }

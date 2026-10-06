@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "../../lib/api";
+import type { AccountOut } from "../accounts/useAccounts";
 import type { ContactOut } from "../contacts/useContacts";
 import SubscriptionForm from "./SubscriptionForm";
+import { fetchBrandLogo } from "./useSubscriptions";
 import type { SubscriptionOut } from "./useSubscriptions";
 
 vi.mock("../../lib/api", async (importOriginal) => {
@@ -11,6 +13,12 @@ vi.mock("../../lib/api", async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 const mockApiFetch = vi.mocked(apiFetch);
+
+vi.mock("./useSubscriptions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./useSubscriptions")>();
+  return { ...actual, fetchBrandLogo: vi.fn() };
+});
+const mockFetchBrandLogo = vi.mocked(fetchBrandLogo);
 
 const ALICE: ContactOut = {
   id: "contact-alice",
@@ -21,6 +29,19 @@ const ALICE: ContactOut = {
   archived_at: null,
   is_demo: false,
   created_at: "2026-01-01T00:00:00Z",
+};
+
+const CHECKING: AccountOut = {
+  id: "acct-checking",
+  name: "Checking",
+  type: "checking",
+  currency: "USD",
+  initial_balance_minor: 0,
+  balance_minor: 100_000,
+  is_demo: false,
+  archived_at: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
 };
 
 const NETFLIX: SubscriptionOut = {
@@ -47,6 +68,7 @@ const NETFLIX: SubscriptionOut = {
 function installBackend(
   contacts: ContactOut[],
   onWrite?: (path: string, opts?: { method?: string; json?: unknown }) => unknown,
+  accounts: AccountOut[] = [],
 ) {
   mockApiFetch
     .mockReset()
@@ -58,7 +80,7 @@ function installBackend(
         return Promise.resolve({ items: [], next_cursor: null });
       }
       if (path.startsWith("/accounts?")) {
-        return Promise.resolve({ items: [], next_cursor: null });
+        return Promise.resolve({ items: accounts, next_cursor: null });
       }
       if (onWrite) {
         try {
@@ -84,6 +106,7 @@ function renderForm(props: Partial<React.ComponentProps<typeof SubscriptionForm>
 describe("SubscriptionForm", () => {
   beforeEach(() => {
     mockApiFetch.mockReset();
+    mockFetchBrandLogo.mockReset().mockResolvedValue(null);
   });
 
   it("creates a subscription with name, amount, frequency, and next renewal", async () => {
@@ -178,6 +201,35 @@ describe("SubscriptionForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /create subscription/i }));
 
     expect(await screen.findByText(/greater than zero/i)).toBeInTheDocument();
+  });
+
+  it("preselects the account carried on initialValues.account_id (Track W.2)", async () => {
+    installBackend([], undefined, [CHECKING]);
+    renderForm({ initialValues: { account_id: CHECKING.id } });
+
+    // Wait for the account list to resolve (the <option> must exist before
+    // the <select>'s value can reflect it) before asserting the selection.
+    await screen.findByRole("option", { name: /checking/i });
+    expect(screen.getByLabelText("Account")).toHaveValue(CHECKING.id);
+  });
+
+  it("fetches a brand logo on mount when opened from a suggestion (Track W.2)", async () => {
+    installBackend([]);
+    mockFetchBrandLogo.mockResolvedValue("data:image/png;base64,AAAA");
+    renderForm({ initialValues: { name: "Netflix" } });
+
+    await waitFor(() => expect(mockFetchBrandLogo).toHaveBeenCalledWith("Netflix"));
+    await waitFor(() =>
+      expect(document.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,AAAA"),
+    );
+  });
+
+  it("never fetches a brand logo for a manual 'New subscription' (no initialValues)", async () => {
+    installBackend([]);
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Netflix" } });
+    expect(mockFetchBrandLogo).not.toHaveBeenCalled();
   });
 
   it("surfaces a clear message when the logo is rejected (LOGO_INVALID)", async () => {

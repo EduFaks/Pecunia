@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import Button from "../../components/ui/Button";
 import Callout from "../../components/ui/Callout";
@@ -16,7 +16,7 @@ import { useAccounts } from "../accounts/useAccounts";
 import CategoryPicker from "../categories/CategoryPicker";
 import ContactPicker from "../contacts/ContactPicker";
 import { CURRENCY_CODES } from "../setup/CurrencySelect";
-import { useCreateSubscription, useUpdateSubscription } from "./useSubscriptions";
+import { fetchBrandLogo, useCreateSubscription, useUpdateSubscription } from "./useSubscriptions";
 import type {
   BillingFrequency,
   SubscriptionOut,
@@ -46,6 +46,7 @@ export interface SubscriptionFormInitial {
   billing_frequency?: BillingFrequency;
   next_renewal?: string;
   category_id?: string | null;
+  account_id?: string | null;
 }
 
 export interface SubscriptionFormProps {
@@ -139,12 +140,32 @@ function SubscriptionForm({
   const [nextRenewal, setNextRenewal] = useState(subscription?.next_renewal ?? initialValues?.next_renewal ?? "");
   const [startedOn, setStartedOn] = useState(subscription?.started_on ?? "");
   const [contactId, setContactId] = useState(subscription?.contact_id ?? "");
-  const [accountId, setAccountId] = useState(subscription?.account_id ?? "");
+  const [accountId, setAccountId] = useState(
+    subscription?.account_id ?? initialValues?.account_id ?? "",
+  );
   const [categoryId, setCategoryId] = useState(subscription?.category_id ?? initialValues?.category_id ?? "");
   const [status, setStatus] = useState<SubscriptionStatus>(subscription?.status ?? "active");
 
   const [amountError, setAmountError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isEdit || !initialValues?.name || logo) {
+      return;
+    }
+    let ignore = false;
+    void fetchBrandLogo(initialValues.name).then((resolved) => {
+      if (!ignore && resolved) {
+        setLogo(resolved);
+      }
+    });
+    return () => {
+      ignore = true;
+    };
+    // Mount-once: deliberately keyed to the initial suggestion, not re-run on
+    // later logo edits. deps intentionally empty.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const accountsQuery = useAccounts();
   const accountOptions: SelectOption[] = [
