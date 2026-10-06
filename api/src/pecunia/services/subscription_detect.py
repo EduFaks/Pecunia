@@ -7,10 +7,11 @@ testable without a database; `SubscriptionDetector` is the thin DB wrapper.
 
 Money is integer minor units; a charge is a NEGATIVE `amount_minor`, and a
 candidate reports the POSITIVE magnitude (the subscription cost). Recurrence
-keys on the provider `merchant` (Track W's captured column), never the noisy
-free-text description.
+keys on the provider `merchant` (Track W's captured column), or on a normalized
+`description` when the provider gives no merchant (Pluggy free tier).
 """
 
+import re
 import statistics
 import uuid
 from collections import Counter, defaultdict
@@ -19,6 +20,47 @@ from datetime import date
 from itertools import pairwise
 
 from pecunia import period
+
+# Leading payment-aggregator prefix, e.g. "IFD*", "PAG*", "MP*", "PP *", "DL*".
+_PREFIX_RE = re.compile(r"^[a-z0-9]{2,6}\*\s*")
+# PIX / transfer verb phrases that precede the real counterparty — longest first.
+_VERB_PREFIXES = (
+    "pix enviado para ", "pix enviado - ", "pix enviado ",
+    "pix recebido de ", "pix recebido - ", "pix recebido ",
+    "transferencia para ", "transferência para ",
+    "pagamento para ", "ted para ", "doc para ",
+    "compra no debito ", "compra no credito ", "compra ",
+    "pagto ", "debito automatico ", "debito ",
+)
+# Dates (d/yyyy, dd/mm, dd/mm/yyyy, yyyy-mm-dd), parcela markers (nn/nn), long digit runs
+# (ids/cnpj/cpf), and card tails (****1234).
+_NOISE_RE = re.compile(
+    r"\b\d{1,2}/\d{2,4}(?:/\d{2,4})?\b" # dates + parcela nn/nn (including mm/yyyy format)
+    r"|\b\d{4}-\d{2}-\d{2}\b"            # iso date
+    r"|\*+\d{2,}"                        # card tail ****1234
+    r"|\b\d{5,}\b"                       # long id/cnpj/cpf run
+)
+
+
+def normalize_description(description: str) -> str:
+    """Stable grouping key derived from a transaction's free-text description —
+    the fallback when the provider gives no structured merchant (Pluggy free
+    tier). Lowercases, strips a payment-aggregator prefix ("IFD*…"), strips a
+    leading PIX/transfer verb phrase to keep just the counterparty, removes
+    dates / parcela markers / long id runs / card tails, drops punctuation, and
+    collapses whitespace. Returns the raw lowercased description if that would
+    otherwise be empty, so a candidate always has a key."""
+    s = description.strip().lower()
+    s = _PREFIX_RE.sub("", s)
+    for verb in _VERB_PREFIXES:
+        if s.startswith(verb):
+            s = s[len(verb):]
+            break
+    s = _NOISE_RE.sub(" ", s)
+    s = re.sub(r"[^a-z0-9à-ÿ ]+", " ", s)   # keep letters (incl. accents), digits, spaces
+    s = re.sub(r"\s+", " ", s).strip()
+    return s or description.strip().lower()
+
 
 # Amount cluster tolerance: an occurrence counts toward a merchant's recurring
 # charge when its magnitude is within ±10% of the group's representative
@@ -43,7 +85,8 @@ _CADENCE_BUCKETS = [
 
 @dataclass(frozen=True)
 class DetectTxn:
-    merchant: str
+    merchant: str | None
+    description: str
     currency: str
     amount_minor: int  # signed; a charge is negative
     occurred_on: date
@@ -122,14 +165,24 @@ def _matches_existing(cand_merchant: str, cand_amount: int, cand_currency: str,
 def detect_candidates(
     txns: list[DetectTxn], *, today: date, existing: list[ExistingSub]
 ) -> list[SubscriptionCandidate]:
-    groups: dict[tuple[str, str], list[DetectTxn]] = defaultdict(list)
+    # Group by (key, label, currency) where key is the merchant or normalized
+    # description, and label is the display name (merchant or title-cased normalized).
+    groups: dict[tuple[str, str, str], list[DetectTxn]] = defaultdict(list)
     for t in txns:
-        if t.amount_minor >= 0 or not t.merchant:
-            continue  # only expenses with a merchant
-        groups[(t.merchant, t.currency)].append(t)
+        if t.amount_minor >= 0:
+            continue  # only expenses
+        # Determine grouping key and label
+        if t.merchant:
+            key = t.merchant
+            label = t.merchant
+        else:
+            norm = normalize_description(t.description)
+            key = norm
+            label = norm.title()
+        groups[(key, label, t.currency)].append(t)
 
     candidates: list[SubscriptionCandidate] = []
-    for (merchant, currency), rows in groups.items():
+    for (key, label, currency), rows in groups.items():
         representative = _representative_amount([abs(r.amount_minor) for r in rows])
         tol = round(representative * _AMOUNT_TOLERANCE)
         kept = [r for r in rows if abs(abs(r.amount_minor) - representative) <= tol]
@@ -138,7 +191,7 @@ def detect_candidates(
         freq = _infer_frequency([r.occurred_on for r in kept])
         if freq is None:
             continue
-        if _matches_existing(merchant, representative, currency, freq, existing):
+        if _matches_existing(key, representative, currency, freq, existing):
             continue
         kept_sorted = sorted(kept, key=lambda r: r.occurred_on)
         first_seen = kept_sorted[0].occurred_on
@@ -147,8 +200,8 @@ def detect_candidates(
         suggested_category_id = cat_counts.most_common(1)[0][0] if cat_counts else None
         candidates.append(
             SubscriptionCandidate(
-                merchant=merchant,
-                suggested_name=merchant,
+                merchant=label,
+                suggested_name=label,
                 amount_minor=representative,
                 currency=currency,
                 billing_frequency=freq,
@@ -185,12 +238,12 @@ class SubscriptionDetector:
             Transaction.amount_minor < 0,           # expenses
             Transaction.transfer_id.is_(None),      # not a transfer leg
             Transaction.deleted_at.is_(None),       # not tombstoned
-            Transaction.merchant.is_not(None),      # has a merchant to key on
         )
         rows = (await self.db.execute(stmt)).scalars().all()
         txns = [
             DetectTxn(
                 merchant=r.merchant,
+                description=r.description,
                 currency=r.currency,
                 amount_minor=r.amount_minor,
                 occurred_on=r.occurred_on,
