@@ -17,16 +17,21 @@ import { useCategories } from "../categories/useCategories";
 import ContactBadge from "../contacts/ContactBadge";
 import { useContacts } from "../contacts/useContacts";
 import SubscriptionForm from "./SubscriptionForm";
+import SubscriptionSuggestions from "./SubscriptionSuggestions";
+import type { SubscriptionFormInitial } from "./SubscriptionForm";
 import {
   useDeleteSubscription,
   useRenewSubscription,
   useSetSubscriptionStatus,
+  useSubscriptionSuggestions,
   useSubscriptionTotals,
   useSubscriptions,
 } from "./useSubscriptions";
-import type { BillingFrequency, SubscriptionOut } from "./useSubscriptions";
+import type { BillingFrequency, SubscriptionOut, SubscriptionSuggestion } from "./useSubscriptions";
 
-type FormState = { mode: "create" } | { mode: "edit"; subscription: SubscriptionOut };
+type FormState =
+  | { mode: "create"; initial?: SubscriptionFormInitial }
+  | { mode: "edit"; subscription: SubscriptionOut };
 
 const FREQUENCY_LABELS: Record<BillingFrequency, string> = {
   weekly: "Weekly",
@@ -59,6 +64,8 @@ function SubscriptionsScreen() {
 
   const subscriptionsQuery = useSubscriptions();
   const totalsQuery = useSubscriptionTotals();
+  const suggestionsQuery = useSubscriptionSuggestions();
+  const [ignoredMerchants, setIgnoredMerchants] = useState<Set<string>>(new Set());
 
   // Archived included so a subscription whose linked contact/category was later
   // archived still resolves its badge — same rationale as the pickers.
@@ -74,10 +81,12 @@ function SubscriptionsScreen() {
   const subscriptions = subscriptionsQuery.data?.items ?? [];
   const baseCurrency = preferences.base_currency;
   const totals = totalsQuery.data ?? {};
-  const baseTotal = totals[baseCurrency] ?? { monthly_minor: 0, annual_minor: 0, count: 0 };
+  const baseTotal = totals[baseCurrency] ?? { monthly_minor: 0, annual_minor: 0, count: 0, by_category: [] };
   // Any currency other than the base that still carries subscriptions — money
   // is never summed across currencies (§4), so these ride as secondary lines.
   const otherCurrencies = Object.entries(totals).filter(([code]) => code !== baseCurrency);
+  const suggestions = (suggestionsQuery.data ?? []).filter((s) => !ignoredMerchants.has(s.merchant));
+  const categoryNameById = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   // Base currency first (even at zero, so the header still shows a figure
   // before the totals rollup has loaded), then every other currency the
   // workspace's subscriptions carry — standardized through the shared
@@ -138,6 +147,24 @@ function SubscriptionsScreen() {
     }
   }
 
+  function handleAddSuggestion(s: SubscriptionSuggestion) {
+    setFormState({
+      mode: "create",
+      initial: {
+        name: s.suggested_name,
+        amount_minor: s.amount_minor,
+        currency: s.currency,
+        billing_frequency: s.billing_frequency,
+        next_renewal: s.suggested_next_renewal,
+        category_id: s.suggested_category_id,
+      },
+    });
+  }
+
+  function handleIgnoreSuggestion(merchant: string) {
+    setIgnoredMerchants((prev) => new Set(prev).add(merchant));
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -147,6 +174,13 @@ function SubscriptionsScreen() {
 
       {subscriptions.length > 0 ? <SummaryHeader stats={rollupStats} /> : null}
 
+      <SubscriptionSuggestions
+        suggestions={suggestions}
+        categoryNameById={categoryNameById}
+        onAdd={handleAddSuggestion}
+        onIgnore={handleIgnoreSuggestion}
+      />
+
       {formState ? (
         <Card>
           <h2 className="font-display text-lg text-ink">
@@ -155,6 +189,7 @@ function SubscriptionsScreen() {
           <div className="mt-4">
             <SubscriptionForm
               subscription={formState.mode === "edit" ? formState.subscription : undefined}
+              initialValues={formState.mode === "create" ? formState.initial : undefined}
               defaultCurrency={baseCurrency}
               onCancel={() => setFormState(null)}
               onSuccess={() => {

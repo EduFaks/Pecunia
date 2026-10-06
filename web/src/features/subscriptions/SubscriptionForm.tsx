@@ -37,6 +37,17 @@ const STATUS_OPTIONS: { value: SubscriptionStatus; label: string }[] = [
   { value: "canceled", label: "Canceled" },
 ];
 
+/** Create-mode seed values (Track W: pre-filling the form from a detected
+ * candidate). Ignored in edit mode (the subscription's own values win). */
+export interface SubscriptionFormInitial {
+  name?: string;
+  amount_minor?: number;
+  currency?: string;
+  billing_frequency?: BillingFrequency;
+  next_renewal?: string;
+  category_id?: string | null;
+}
+
 export interface SubscriptionFormProps {
   /** Presence switches the form into edit mode (PATCH, prefilled fields).
    * Absence is create mode (POST). */
@@ -44,6 +55,9 @@ export interface SubscriptionFormProps {
   /** Create mode's currency default (the workspace base currency). Ignored in
    * edit mode (the subscription's own currency wins). */
   defaultCurrency?: string;
+  /** Create-mode seed values (Track W: pre-filling the form from a detected
+   * candidate). Ignored in edit mode (the subscription's own values win). */
+  initialValues?: SubscriptionFormInitial;
   onSuccess: (subscription: SubscriptionOut) => void;
   onCancel?: () => void;
 }
@@ -96,28 +110,37 @@ function calloutError(error: unknown): string | null {
 function SubscriptionForm({
   subscription,
   defaultCurrency,
+  initialValues,
   onSuccess,
   onCancel,
 }: SubscriptionFormProps) {
   const isEdit = subscription !== undefined;
 
-  const [name, setName] = useState(subscription?.name ?? "");
+  const [name, setName] = useState(subscription?.name ?? initialValues?.name ?? "");
   const [logo, setLogo] = useState<string | null>(subscription?.logo ?? null);
   const [currency, setCurrency] = useState(
     subscription?.currency ??
-      (defaultCurrency && CURRENCY_CODES.includes(defaultCurrency) ? defaultCurrency : CURRENCY_CODES[0]),
+      (initialValues?.currency && CURRENCY_CODES.includes(initialValues.currency)
+        ? initialValues.currency
+        : defaultCurrency && CURRENCY_CODES.includes(defaultCurrency)
+          ? defaultCurrency
+          : CURRENCY_CODES[0]),
   );
   const [amount, setAmount] = useState(
-    subscription ? minorToAmountInput(subscription.amount_minor, subscription.currency) : "",
+    subscription
+      ? minorToAmountInput(subscription.amount_minor, subscription.currency)
+      : initialValues?.amount_minor != null && initialValues?.currency
+        ? minorToAmountInput(initialValues.amount_minor, initialValues.currency)
+        : "",
   );
   const [frequency, setFrequency] = useState<BillingFrequency>(
-    subscription?.billing_frequency ?? "monthly",
+    subscription?.billing_frequency ?? initialValues?.billing_frequency ?? "monthly",
   );
-  const [nextRenewal, setNextRenewal] = useState(subscription?.next_renewal ?? "");
+  const [nextRenewal, setNextRenewal] = useState(subscription?.next_renewal ?? initialValues?.next_renewal ?? "");
   const [startedOn, setStartedOn] = useState(subscription?.started_on ?? "");
   const [contactId, setContactId] = useState(subscription?.contact_id ?? "");
   const [accountId, setAccountId] = useState(subscription?.account_id ?? "");
-  const [categoryId, setCategoryId] = useState(subscription?.category_id ?? "");
+  const [categoryId, setCategoryId] = useState(subscription?.category_id ?? initialValues?.category_id ?? "");
   const [status, setStatus] = useState<SubscriptionStatus>(subscription?.status ?? "active");
 
   const [amountError, setAmountError] = useState<string | null>(null);

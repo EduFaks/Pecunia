@@ -69,9 +69,33 @@ export interface SubscriptionOut {
   annual_minor: number;
 }
 
+/** Mirrors `SubscriptionSuggestionOut` (`api/src/pecunia/api/subscriptions.py`):
+ * a detected recurring-charge candidate the user can confirm into a real
+ * subscription. Read-only; carries no id (it is not persisted). */
+export interface SubscriptionSuggestion {
+  merchant: string;
+  suggested_name: string;
+  amount_minor: number;
+  currency: string;
+  billing_frequency: BillingFrequency;
+  occurrences: number;
+  first_seen: string;
+  last_seen: string;
+  suggested_next_renewal: string;
+  suggested_category_id: string | null;
+}
+
 export interface SubscriptionPage {
   items: SubscriptionOut[];
   next_cursor: string | null;
+}
+
+export interface CategorySubtotal {
+  category_id: string | null;
+  name: string | null;
+  monthly_minor: number;
+  annual_minor: number;
+  count: number;
 }
 
 /** One currency's rollup — Σ of the normalized figures over the subscriptions
@@ -81,6 +105,7 @@ export interface CurrencyTotal {
   monthly_minor: number;
   annual_minor: number;
   count: number;
+  by_category: CategorySubtotal[];
 }
 
 /** The per-currency totals envelope `GET /subscriptions/totals` returns —
@@ -166,6 +191,18 @@ export function useSubscriptionTotals(status: SubscriptionStatus = "active") {
   return useQuery({
     queryKey: [...qk.subscriptions, "totals", status],
     queryFn: () => apiFetch<SubscriptionTotals>(`/subscriptions/totals?status=${status}`),
+  });
+}
+
+/** Detected recurring-charge candidates (`GET /subscriptions/suggestions`,
+ * Track W). Keyed `[...qk.subscriptions, "suggestions"]` so it nests under the
+ * `qk.subscriptions` prefix every mutation already invalidates — confirming a
+ * candidate (a create) therefore refreshes this list and the candidate drops
+ * out (its merchant now matches an active subscription). */
+export function useSubscriptionSuggestions() {
+  return useQuery({
+    queryKey: [...qk.subscriptions, "suggestions"],
+    queryFn: () => apiFetch<SubscriptionSuggestion[]>("/subscriptions/suggestions"),
   });
 }
 
