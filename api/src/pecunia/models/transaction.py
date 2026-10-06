@@ -56,6 +56,12 @@ class Transaction(Base):
     # rows the sync created; NULL for manual/transfer-leg transactions. See
     # `uq_transactions_account_id_external_id` above for the dedupe rule.
     external_id: Mapped[str | None] = mapped_column(Text)
+    # The counterparty/merchant name from the provider (Track W) — Pluggy's
+    # structured `merchant.name`/`businessName`, captured so the subscription
+    # detector can key recurrence on a stable name instead of the noisy free
+    # `description`. NULL for manual rows and for imported rows that predate
+    # this column (backfilled operationally) or that carried no merchant.
+    merchant: Mapped[str | None] = mapped_column(Text)
     is_demo: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
