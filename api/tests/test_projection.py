@@ -230,6 +230,20 @@ async def test_card_spend_mtd_excludes_transfer_legs(db, initialized_instance):
     assert result["USD"]["points"][0]["components"]["card_bills_minor"] == 1_300_000 - 20_000
 
 
+async def test_zero_card_bill_produces_no_label(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    card = await _card_account(db, ws_id, currency="USD", name="PaidOffCard")
+    await _card_link(db, ws_id, card, provider_balance_minor=-20_000, bill_due_date=date(2026, 8, 20))
+    # Spend this month already covers the full bill -> bill == 0.
+    await _tx(db, ws_id, card, amount=-20_000, on=date(2026, 9, 10))
+
+    result = await ProjectionService(db).project(ws_id, today=TODAY, months=1)
+    points = result["USD"]["points"]
+
+    assert points[0]["components"]["card_bills_minor"] == 0
+    assert points[0]["card_bill_labels"] == []
+
+
 # --------------------------------------------------------------------------- #
 # realistic <= optimistic; equal when the variable band is 0
 # --------------------------------------------------------------------------- #
@@ -330,6 +344,30 @@ async def test_runway_index_points_at_the_month_it_first_dips_negative(db, initi
 
     assert out["runway_months"] == 2
     assert out["runway_until"] == points[1]["date"]
+
+
+async def test_runway_reflects_already_negative_start(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    # TODAY's balance is already negative...
+    acc = await _account(db, ws_id, currency="USD", initial=-5_000)
+    # ...but the first projected point recovers to >= 0, with no later dip.
+    await _scheduled(
+        db, ws_id, acc, description="Salary", amount=10_000, next_due=date(2026, 10, 1),
+    )
+
+    result = await ProjectionService(db).project(ws_id, today=TODAY, months=2)
+    out = result["USD"]
+    points = out["points"]
+
+    assert points[0]["realistic_minor"] == 5_000
+    assert points[1]["realistic_minor"] == 15_000  # salary recurs monthly, no dip
+
+    # Overdrawn TODAY -> runway must report zero, not None ("no risk") —
+    # None would contradict a non-null recovery below.
+    assert out["runway_months"] == 0
+    assert out["runway_until"] == TODAY
+    assert out["lowest_point"] == {"value_minor": -5_000, "date": TODAY}
+    assert out["recovery"] == {"date": points[0]["date"], "value_minor": 5_000}
 
 
 # --------------------------------------------------------------------------- #

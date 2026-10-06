@@ -203,24 +203,40 @@ class ProjectionService:
     @staticmethod
     def _derive(today: date, start: int, points: list[dict]) -> dict:
         """`runway_months`/`runway_until`, `lowest_point` and `recovery` —
-        all read off the REALISTIC line. `lowest_point`/`recovery` walk a
-        series seeded with `{date: today, value: start}` ahead of the
+        all read off the REALISTIC line, and all derived from the SAME
+        series: seeded with `{date: today, value: start}` ahead of the
         projected points, so a dip that's already true TODAY (current
         balance already negative) shows up rather than being invisible
-        until the next projected point. `runway_months` is a 1-based index
-        into `points` itself (there is no "month 0" to report a date for),
-        so it is computed from `points` alone."""
-        runway_months: int | None = None
-        runway_until: date | None = None
-        for i, point in enumerate(points):
-            if point["realistic_minor"] < 0:
-                runway_months = i + 1
-                runway_until = point["date"]
-                break
+        until the next projected point. Deriving `runway_months` from
+        `points` alone (ignoring `start`) could report "no risk" (`None`)
+        in the same breath `recovery` reports a non-null "recovered from a
+        dip" — a self-contradictory payload that hides an already-negative
+        balance. So:
 
+        - already overdrawn TODAY (`start < 0`) -> `runway_months = 0`,
+          `runway_until = today` — there is no runway left to report.
+        - else -> the usual 1-based index into `points` of the first
+          realistic-negative month (there is no "month 0" to date in this
+          branch, since `start >= 0`).
+        - nothing ever negative (including `start`) -> both `None`.
+        """
         seeded = [{"date": today, "value": start}] + [
             {"date": p["date"], "value": p["realistic_minor"]} for p in points
         ]
+
+        runway_months: int | None
+        runway_until: date | None
+        if start < 0:
+            runway_months = 0
+            runway_until = today
+        else:
+            runway_months = None
+            runway_until = None
+            for i, point in enumerate(points):
+                if point["realistic_minor"] < 0:
+                    runway_months = i + 1
+                    runway_until = point["date"]
+                    break
 
         lowest = seeded[0]
         for item in seeded[1:]:
@@ -293,7 +309,8 @@ class ProjectionService:
             )
             bill = max(0, owed - card_spend_mtd)
             bucket(currency)["card_bills_minor"][idx] += bill
-            labels[currency][idx].append({"label": name, "amount_minor": bill})
+            if bill > 0:
+                labels[currency][idx].append({"label": name, "amount_minor": bill})
 
     async def _cash_start(self, workspace_id: uuid.UUID) -> dict[str, int]:
         """Current summed account balance per currency — mirrors
