@@ -11,6 +11,7 @@ from pecunia.db import get_db
 from pecunia.models.subscription import Subscription, SubscriptionStatus
 from pecunia.money import CurrencyStr, MinorInt
 from pecunia.pagination import DEFAULT_LIMIT
+from pecunia.services.brand_logo import fetch_logo
 from pecunia.services.subscription_detect import SubscriptionDetector
 from pecunia.services.subscriptions import (
     UNSET,
@@ -115,6 +116,7 @@ class SubscriptionSuggestionOut(BaseModel):
     last_seen: date
     suggested_next_renewal: date
     suggested_category_id: uuid.UUID | None
+    suggested_account_id: uuid.UUID | None
 
 
 class SubscriptionPage(BaseModel):
@@ -249,9 +251,26 @@ async def subscription_suggestions(
             last_seen=c.last_seen,
             suggested_next_renewal=c.suggested_next_renewal,
             suggested_category_id=c.suggested_category_id,
+            suggested_account_id=c.suggested_account_id,
         )
         for c in candidates
     ]
+
+
+class BrandLogoOut(BaseModel):
+    logo: str | None
+
+
+# Declared before `/{subscription_id}` so "brand-logo" is matched as this
+# route rather than parsed as a subscription id.
+@router.get("/brand-logo")
+async def subscription_brand_logo(
+    name: str,
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+) -> BrandLogoOut:
+    # Auth-gated (wsctx) so only a logged-in workspace can trigger the outbound
+    # favicon fetch. SSRF-safe: fetch_logo only ever hits a curated domain.
+    return BrandLogoOut(logo=await fetch_logo(name))
 
 
 @router.get("/{subscription_id}")

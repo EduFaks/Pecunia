@@ -83,6 +83,7 @@ export interface SubscriptionSuggestion {
   last_seen: string;
   suggested_next_renewal: string;
   suggested_category_id: string | null;
+  suggested_account_id: string | null;
 }
 
 export interface SubscriptionPage {
@@ -204,6 +205,19 @@ export function useSubscriptionSuggestions() {
     queryKey: [...qk.subscriptions, "suggestions"],
     queryFn: () => apiFetch<SubscriptionSuggestion[]>("/subscriptions/suggestions"),
   });
+}
+
+/** Best-effort brand logo (base64 data-URI) for a suggestion name, or null.
+ * Backed by GET /subscriptions/brand-logo (favicon service, curated domains). */
+export async function fetchBrandLogo(name: string): Promise<string | null> {
+  try {
+    const r = await apiFetch<{ logo: string | null }>(
+      `/subscriptions/brand-logo?name=${encodeURIComponent(name)}`,
+    );
+    return r.logo;
+  } catch {
+    return null;
+  }
 }
 
 /** Refreshes the subscriptions prefix (the flat list AND the totals rollup —

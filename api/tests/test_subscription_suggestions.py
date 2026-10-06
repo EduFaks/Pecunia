@@ -79,6 +79,7 @@ async def test_suggestions_detect_recurring_imported_charges(client, initialized
     assert c["last_seen"] == "2026-09-05"
     assert c["suggested_next_renewal"] == "2026-10-05"
     assert c["suggested_category_id"] is None
+    assert c["suggested_account_id"] == str(account.id)
 
 
 async def test_suggestions_excludes_existing_active_subscription(client, initialized_instance, db):
