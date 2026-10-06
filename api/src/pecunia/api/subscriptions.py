@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +11,7 @@ from pecunia.db import get_db
 from pecunia.models.subscription import Subscription, SubscriptionStatus
 from pecunia.money import CurrencyStr, MinorInt
 from pecunia.pagination import DEFAULT_LIMIT
+from pecunia.services.subscription_detect import SubscriptionDetector
 from pecunia.services.subscriptions import (
     UNSET,
     LogoInvalidError,
@@ -103,15 +104,37 @@ class SubscriptionOut(BaseModel):
         )
 
 
+class SubscriptionSuggestionOut(BaseModel):
+    merchant: str
+    suggested_name: str
+    amount_minor: int
+    currency: str
+    billing_frequency: str
+    occurrences: int
+    first_seen: date
+    last_seen: date
+    suggested_next_renewal: date
+    suggested_category_id: uuid.UUID | None
+
+
 class SubscriptionPage(BaseModel):
     items: list[SubscriptionOut]
     next_cursor: str | None
+
+
+class CategorySubtotal(BaseModel):
+    category_id: uuid.UUID | None
+    name: str | None
+    monthly_minor: int
+    annual_minor: int
+    count: int
 
 
 class CurrencyTotal(BaseModel):
     monthly_minor: int
     annual_minor: int
     count: int
+    by_category: list[CategorySubtotal]
 
 
 def _raise_validation(exc: Exception) -> None:
@@ -203,6 +226,32 @@ async def subscription_totals(
 ) -> dict[str, CurrencyTotal]:
     svc = SubscriptionService(db)
     return await svc.totals(wsctx.workspace_id, status=status.value)
+
+
+# Declared before `/{subscription_id}` so "suggestions" is matched as this
+# route rather than parsed as a subscription id.
+@router.get("/suggestions")
+async def subscription_suggestions(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+) -> list[SubscriptionSuggestionOut]:
+    detector = SubscriptionDetector(db)
+    candidates = await detector.suggest(wsctx.workspace_id, today=datetime.now(UTC).date())
+    return [
+        SubscriptionSuggestionOut(
+            merchant=c.merchant,
+            suggested_name=c.suggested_name,
+            amount_minor=c.amount_minor,
+            currency=c.currency,
+            billing_frequency=c.billing_frequency,
+            occurrences=c.occurrences,
+            first_seen=c.first_seen,
+            last_seen=c.last_seen,
+            suggested_next_renewal=c.suggested_next_renewal,
+            suggested_category_id=c.suggested_category_id,
+        )
+        for c in candidates
+    ]
 
 
 @router.get("/{subscription_id}")

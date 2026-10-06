@@ -37,6 +37,9 @@ function installBackend() {
       if (path.startsWith("/subscriptions/totals")) {
         return Promise.resolve(totals);
       }
+      if (path === "/subscriptions/suggestions") {
+        return Promise.resolve([]);
+      }
       if (path.endsWith("/renew") && method === "POST") {
         const id = path.split("/")[2];
         const sub = subscriptions.find((s) => s.id === id)!;
@@ -154,7 +157,7 @@ describe("SubscriptionsScreen", () => {
   });
 
   it("renders the monthly + annual totals header and lists each subscription", async () => {
-    seed([NETFLIX, SPOTIFY], { USD: { monthly_minor: 2599, annual_minor: 31188, count: 2 } });
+    seed([NETFLIX, SPOTIFY], { USD: { monthly_minor: 2599, annual_minor: 31188, count: 2, by_category: [] } });
     renderScreen();
 
     // Totals header (base currency): monthly $25.99, annualized $311.88.
@@ -179,8 +182,8 @@ describe("SubscriptionsScreen", () => {
     seed(
       [NETFLIX],
       {
-        USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 },
-        EUR: { monthly_minor: 500, annual_minor: 6000, count: 1 },
+        USD: { monthly_minor: 1599, annual_minor: 19188, count: 1, by_category: [] },
+        EUR: { monthly_minor: 500, annual_minor: 6000, count: 1, by_category: [] },
       },
     );
     renderScreen();
@@ -197,7 +200,7 @@ describe("SubscriptionsScreen", () => {
   });
 
   it("stacks a row and wraps its action buttons instead of squeezing four of them onto one cramped line on a narrow viewport", async () => {
-    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 } });
+    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1, by_category: [] } });
     renderScreen();
 
     const row = (await screen.findByText("Netflix")).closest("li")!;
@@ -212,7 +215,7 @@ describe("SubscriptionsScreen", () => {
   });
 
   it("renews a subscription by advancing its renewal date", async () => {
-    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 } });
+    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1, by_category: [] } });
     renderScreen();
 
     await screen.findByText("Netflix");
@@ -226,7 +229,7 @@ describe("SubscriptionsScreen", () => {
   });
 
   it("cancels a subscription by patching its status", async () => {
-    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1 } });
+    seed([NETFLIX], { USD: { monthly_minor: 1599, annual_minor: 19188, count: 1, by_category: [] } });
     renderScreen();
 
     await screen.findByText("Netflix");
@@ -249,5 +252,37 @@ describe("SubscriptionsScreen", () => {
     expect(within(row).getByRole("button", { name: /reactivate/i })).toBeInTheDocument();
     // Renew is meaningless for a canceled subscription.
     expect(within(row).queryByRole("button", { name: /^renew$/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the monthly spend by category breakdown when categories are present", async () => {
+    seed([NETFLIX, SPOTIFY], {
+      USD: {
+        monthly_minor: 2599,
+        annual_minor: 31188,
+        count: 2,
+        by_category: [
+          { category_id: "c1", name: "Streaming", monthly_minor: 3000, annual_minor: 36000, count: 2 },
+          { category_id: null, name: null, monthly_minor: 1000, annual_minor: 12000, count: 1 },
+        ],
+      },
+    });
+    renderScreen();
+
+    // Wait for the subscriptions to load
+    await screen.findByText("Netflix");
+
+    // Check the category breakdown card is present
+    const categoryCard = screen.getByText("Monthly spend by category").parentElement!;
+    expect(categoryCard).toBeInTheDocument();
+
+    // Check that the "Streaming" category is rendered with its monthly figure
+    expect(within(categoryCard).getByText("Streaming")).toBeInTheDocument();
+
+    // Find the uncategorized row by looking for "Uncategorized" in the card
+    expect(within(categoryCard).getByText("Uncategorized")).toBeInTheDocument();
+
+    // Both category rows should have monthly values
+    const monthlyValues = within(categoryCard).getAllByText(/\$\d+\.\d{2}/);
+    expect(monthlyValues.length).toBeGreaterThanOrEqual(2);
   });
 });

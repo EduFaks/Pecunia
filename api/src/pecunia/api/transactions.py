@@ -77,6 +77,7 @@ class TransactionOut(BaseModel):
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    merchant: str | None
 
     @classmethod
     def from_model(cls, transaction: Transaction) -> "TransactionOut":
@@ -96,6 +97,7 @@ class TransactionOut(BaseModel):
             deleted_at=transaction.deleted_at,
             created_at=transaction.created_at,
             updated_at=transaction.updated_at,
+            merchant=transaction.merchant,
         )
 
 

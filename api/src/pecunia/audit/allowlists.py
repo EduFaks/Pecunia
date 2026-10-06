@@ -17,6 +17,7 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
         {
             "id", "account_id", "category_id", "contact_id", "project_id", "transfer_id",
             "amount_minor", "currency", "description", "occurred_on", "is_demo", "external_id",
+            "merchant",
         }
     ),
     "transfer": frozenset(
