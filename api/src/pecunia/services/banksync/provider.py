@@ -110,6 +110,7 @@ class ProviderTransaction:
     currency: str
     status: str  # "POSTED" | "PENDING" — passed through, the service filters
     pluggy_category: str | None
+    merchant: str | None = None  # Pluggy's merchant.name / businessName, else None
 
 
 class BankProvider(Protocol):
@@ -380,6 +381,8 @@ class PluggyProvider:
         # where a purchase arrives as a positive amount with type "DEBIT".
         minor = _to_minor(abs(row["amount"]), currency)
         amount_minor = -minor if row["type"] == "DEBIT" else minor
+        merchant_obj = row.get("merchant") or {}
+        merchant = merchant_obj.get("name") or merchant_obj.get("businessName")
         return ProviderTransaction(
             external_id=row["id"],
             date=date.fromisoformat(row["date"][:10]),
@@ -388,6 +391,7 @@ class PluggyProvider:
             currency=currency,
             status=row["status"],
             pluggy_category=row.get("category"),
+            merchant=merchant,
         )
 
 

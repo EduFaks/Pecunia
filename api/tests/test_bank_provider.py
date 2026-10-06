@@ -965,3 +965,91 @@ async def test_fake_bank_provider_raise_for_accounts_only_affects_that_account()
     assert await fake.fetch_transactions("acc-ok", from_date=date(2026, 1, 1)) == []
     with pytest.raises(BankProviderError):
         await fake.fetch_transactions("acc-bad", from_date=date(2026, 1, 1))
+
+
+# --------------------------------------------------------------------------- #
+# Task 2: merchant capture
+# --------------------------------------------------------------------------- #
+
+
+async def test_map_transaction_captures_merchant_name():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "t1",
+                        "date": "2026-09-01T00:00:00.000Z",
+                        "description": "NETFLIX.COM",
+                        "amount": 19.90,
+                        "currencyCode": "BRL",
+                        "type": "DEBIT",
+                        "status": "POSTED",
+                        "merchant": {"name": "Netflix", "businessName": "Netflix Servicos"},
+                    }
+                ],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert result[0].merchant == "Netflix"
+
+
+async def test_map_transaction_falls_back_to_business_name():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "t2",
+                        "date": "2026-09-01T00:00:00.000Z",
+                        "description": "SPOTIFY",
+                        "amount": 21.90,
+                        "currencyCode": "BRL",
+                        "type": "DEBIT",
+                        "status": "POSTED",
+                        "merchant": {"businessName": "Spotify Brasil"},
+                    }
+                ],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert result[0].merchant == "Spotify Brasil"
+
+
+async def test_map_transaction_merchant_absent_is_none():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"apiKey": "key-1"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "t3",
+                        "date": "2026-09-01T00:00:00.000Z",
+                        "description": "PIX",
+                        "amount": 50.0,
+                        "currencyCode": "BRL",
+                        "type": "DEBIT",
+                        "status": "POSTED",
+                    }
+                ],
+                "next": None,
+            },
+        )
+
+    provider = _provider(handler)
+    result = await provider.fetch_transactions("acc-1", from_date=date(2026, 1, 1))
+    assert result[0].merchant is None
