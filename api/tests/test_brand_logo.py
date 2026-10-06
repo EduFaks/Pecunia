@@ -108,6 +108,31 @@ async def test_fetch_logo_transport_error_returns_none():
 # --------------------------------------------------------------------------- #
 
 
+async def test_fetch_logo_at_cap_boundary_passes_subscription_validator():
+    """Verify that a logo returned at _MAX_RAW_BYTES boundary stays within the
+    subscription logo's 64KB encoded cap and passes the real validator."""
+    from pecunia.services.brand_logo import _MAX_RAW_BYTES
+    from pecunia.services.subscriptions import MAX_LOGO_BYTES, _validate_logo
+
+    # Generate png_bytes at exactly the cap size
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * (_MAX_RAW_BYTES - 8)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=png_bytes, headers={"content-type": "image/png"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    result = await fetch_logo("Netflix", client=client)
+
+    # Assert the result is not None
+    assert result is not None
+
+    # Assert the encoded result stays under the subscription logo limit
+    assert len(result.encode("utf-8")) <= MAX_LOGO_BYTES
+
+    # Optionally, assert _validate_logo does not raise
+    _validate_logo(result)
+
+
 async def test_brand_logo_endpoint_unknown_name_returns_null_logo(client, initialized_instance):
     h = await _auth(client)
     resp = await client.get("/api/v1/subscriptions/brand-logo?name=Cardbankslip", headers=h)

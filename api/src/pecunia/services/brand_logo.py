@@ -14,9 +14,11 @@ import httpx
 _FAVICON_URL = "https://www.google.com/s2/favicons"
 _FAVICON_SIZE = 128
 _FETCH_TIMEOUT = 5.0
-# Raw-byte cap chosen so the base64 string (~4/3x) stays under the subscription
-# logo's 64KB encoded cap (SubscriptionService.MAX_LOGO_BYTES). 48KB raw -> ~64KB b64.
-_MAX_RAW_BYTES = 48 * 1024
+# Raw-byte cap chosen so the data-URI string (prefix "data:image/png;base64," +
+# base64-encoded payload, ~4/3x expansion) stays under the subscription logo's
+# 64KB encoded cap (MAX_LOGO_BYTES = 65536). Prefix is 22 bytes; need
+# 22 + 4*ceil(N/3) <= 65536, so N <= ~49134. Use 47KB to stay safely under cap.
+_MAX_RAW_BYTES = 47 * 1024
 
 # Substring (of the lowercased, space-stripped name) -> brand domain. More
 # specific keys first so "amazonprime" wins before a bare "amazon".
