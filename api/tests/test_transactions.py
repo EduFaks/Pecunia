@@ -1203,3 +1203,46 @@ async def test_update_imported_transaction_other_fields_editable_via_api(client,
     assert resp.status_code == 200
     assert resp.json()["description"] == "Renamed"
     await db.rollback()
+
+
+async def test_create_persists_merchant(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id, account_id=account.id, amount_minor=-1990, currency="BRL",
+        description="NETFLIX", occurred_on=date(2026, 9, 1),
+        external_id="ext-9", merchant="Netflix",
+    )
+    assert tx.merchant == "Netflix"
+
+
+async def test_create_merchant_defaults_none(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _svc_account(db, ws_id)
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id, account_id=account.id, amount_minor=-500, currency="BRL",
+        description="manual", occurred_on=date(2026, 9, 2),
+    )
+    assert tx.merchant is None
+
+
+async def test_api_returns_transaction_with_merchant(client, initialized_instance, db):
+    h = await _auth(client)
+    acc = await _account(client, h)
+    ws_id = initialized_instance["workspace_id"]
+    svc = TransactionService(db)
+    tx = await svc.create(
+        ws_id,
+        account_id=uuid.UUID(acc["id"]),
+        amount_minor=-1500,
+        currency="BRL",
+        description="Spotify subscription",
+        occurred_on=date(2026, 9, 11),
+        external_id="pluggy-spotify-1",
+        merchant="Spotify",
+    )
+    await db.commit()
+    got = (await client.get(f"/api/v1/transactions/{tx.id}", headers=h)).json()
+    assert got["merchant"] == "Spotify"

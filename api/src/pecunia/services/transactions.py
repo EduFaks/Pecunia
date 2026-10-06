@@ -111,6 +111,7 @@ class TransactionService:
         contact_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
         external_id: str | None = None,
+        merchant: str | None = None,
     ) -> Transaction:
         await self._validate_account(workspace_id, account_id, currency)
         contact_row = (
@@ -148,6 +149,7 @@ class TransactionService:
             description=description,
             occurred_on=occurred_on,
             external_id=external_id,
+            merchant=merchant,
         )
         self.db.add(transaction)
         await self.db.flush()

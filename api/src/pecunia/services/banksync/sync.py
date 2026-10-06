@@ -512,6 +512,7 @@ class BankSyncService:
                 occurred_on=row.date,
                 category_id=category_by_pluggy_category.get(row.pluggy_category),
                 external_id=row.external_id,
+                merchant=row.merchant,
             )
             created += 1
         return (created, skipped)

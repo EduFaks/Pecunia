@@ -65,7 +65,7 @@ def _bank_account(pluggy_account_id="acc-1", item_id="item-1", *, type="BANK", s
 
 
 def _tx_row(external_id, *, days_ago=1, amount_minor=-100_00, currency="BRL", status="POSTED",
-            category=None, description="Purchase"):
+            category=None, description="Purchase", merchant=None):
     return ProviderTransaction(
         external_id=external_id,
         date=TODAY - timedelta(days=days_ago),
@@ -74,6 +74,7 @@ def _tx_row(external_id, *, days_ago=1, amount_minor=-100_00, currency="BRL", st
         currency=currency,
         status=status,
         pluggy_category=category,
+        merchant=merchant,
     )
 
 
@@ -549,6 +550,34 @@ async def test_sync_workspace_category_mapping_hit_and_miss(db, initialized_inst
     unmapped = await db.scalar(sa.select(Transaction).where(Transaction.external_id == "tx-unmapped"))
     assert mapped.category_id == category.id
     assert unmapped.category_id is None
+
+
+async def test_sync_workspace_imports_merchant_from_provider(db, initialized_instance):
+    ws_id = initialized_instance["workspace_id"]
+    account = await _account(db, ws_id, currency="BRL")
+    connection = await _connection(db, ws_id)
+    await _link(db, ws_id, connection, account, sync_from=date(2026, 1, 1))
+    provider = FakeBankProvider(
+        connections=[ProviderConnection(item_id="item-1", institution_name="Bank", status="UPDATED")],
+        accounts_by_item={"item-1": [_bank_account(currency="BRL", balance_minor=0)]},
+        transactions_by_account={
+            "acc-1": [
+                _tx_row("ext-spotify", days_ago=1, description="Spotify", merchant="Spotify"),
+                _tx_row("ext-netflix", days_ago=2, description="Netflix", merchant="Netflix"),
+            ]
+        },
+    )
+    svc = BankSyncService(db, provider)
+    await svc.sync_workspace(ws_id, today=TODAY)
+    await db.commit()
+    spotify_tx = (await db.execute(
+        sa.select(Transaction).where(Transaction.external_id == "ext-spotify")
+    )).scalar_one()
+    netflix_tx = (await db.execute(
+        sa.select(Transaction).where(Transaction.external_id == "ext-netflix")
+    )).scalar_one()
+    assert spotify_tx.merchant == "Spotify"
+    assert netflix_tx.merchant == "Netflix"
 
 
 async def test_sync_workspace_refreshes_card_fields_on_each_run(db, initialized_instance):
