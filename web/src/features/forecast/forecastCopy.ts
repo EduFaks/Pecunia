@@ -9,6 +9,16 @@
 
 import type { CardBillLabel, ProjectionComponents, ProjectionPoint } from "./useForecast";
 
+/** Explicit sign glyphs for a component magnitude that carries no sign of its
+ * own (every `ProjectionComponents` field is a non-negative magnitude,
+ * `api/src/pecunia/services/projection.py`'s `project`): "+" (U+002B) for the
+ * one inflow row, "−" (U+2212, a real minus sign) for every outflow. Shared
+ * by `MonthBreakdown`'s component rows and `ForecastScreen`'s recovery tile
+ * (`SafeToSpendCard` keeps its own copy of the same idiom, outside this
+ * feature). */
+export const SIGN_POSITIVE = "+";
+export const SIGN_NEGATIVE = "−";
+
 /** The projected month-end point matching an ISO date, or `undefined` when
  * that date isn't one of `points`' own axis values. Both `lowest_point` and
  * `recovery` can land on TODAY's seeded actual balance rather than any
@@ -134,4 +144,20 @@ export function breakdownRows(
   }
 
   return rows;
+}
+
+/**
+ * The month's own net change ("Variação do mês" in `MonthBreakdown`) — the
+ * signed sum of `breakdownRows`' own displayed magnitudes (+income, minus
+ * every outflow row), computed from those same rows so it is guaranteed to
+ * equal what they show rather than risk drifting from them.
+ *
+ * Deliberately NOT `realistic_minor` ("Saldo projetado"): that figure is the
+ * RUNNING cash balance, which also bakes in every earlier month's own change
+ * plus today's starting balance (`ProjectionService.project`'s
+ * `running_optimistic`/`cumulative_variable` accumulators) — so it generally
+ * does not equal this month's own delta past the first projected month.
+ */
+export function monthDeltaMinor(rows: BreakdownRow[]): number {
+  return rows.reduce((sum, row) => sum + (row.tone === "positive" ? row.minor : -row.minor), 0);
 }

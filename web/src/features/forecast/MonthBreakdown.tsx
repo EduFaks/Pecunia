@@ -2,16 +2,15 @@ import { useState } from "react";
 import Select from "../../components/ui/Select";
 import type { SelectOption } from "../../components/ui/Select";
 import { MoneyText } from "../../lib/preferences";
-import { breakdownRows, defaultBreakdownDate, findPointByDate } from "./forecastCopy";
+import {
+  breakdownRows,
+  defaultBreakdownDate,
+  findPointByDate,
+  monthDeltaMinor,
+  SIGN_NEGATIVE,
+  SIGN_POSITIVE,
+} from "./forecastCopy";
 import type { ProjectionPoint } from "./useForecast";
-
-/** Explicit sign glyphs, same rationale/characters `SafeToSpendCard` already
- * uses: "+" (U+002B) for the one inflow row, "−" (U+2212, a real minus sign)
- * for every outflow — the component fields are plain non-negative
- * magnitudes (`projection.py`'s `project`), so the glyph has to be added by
- * hand rather than relying on the number's own sign. */
-const SIGN_POSITIVE = "+";
-const SIGN_NEGATIVE = "−";
 
 /** A compact month-and-year option label ("nov. 2026") for the month
  * switcher — the same UTC-read move `ProjectionChart`'s own (unexported)
@@ -43,18 +42,20 @@ export interface MonthBreakdownProps {
  * signed/colored list of the selected month's `components` (income,
  * subscriptions, loans, card bills — expanded per card when labeled,
  * variable spend with its lookback caption), each row only rendered when
- * non-zero (`breakdownRows`), ending in a "→ saldo" line showing the
- * month's own `realistic_minor` as-is.
+ * non-zero (`breakdownRows`), followed by two distinct total lines:
  *
- * The rows above describe only what MOVED this one month; `realistic_minor`
- * is the running cash balance after that move, which also bakes in every
- * EARLIER month's own change plus today's starting balance
- * (`ProjectionService.project`'s `running_optimistic`/`cumulative_variable`
- * accumulators) — so the rows generally do NOT sum to the saldo for any
- * month past the first (there's no "carried-forward balance" row to make
- * that arithmetic whole). The saldo line is shown for its own sake — "this
- * is what's left in the bank by then" — not as a running total of the rows
- * directly above it.
+ * - "Variação do mês" — `monthDeltaMinor(rows)`, the signed sum of the ROWS
+ *   ABOVE IT ONLY. This is computed from those same rows (not re-derived
+ *   from `components` a second way), so it is guaranteed to reconcile
+ *   exactly with what they show — no black box.
+ * - "Saldo projetado" — the month's own `realistic_minor` as-is, shown
+ *   separately below a second divider with a deliberately more muted label.
+ *   This is the RUNNING cash balance, which also bakes in every EARLIER
+ *   month's own change plus today's starting balance
+ *   (`ProjectionService.project`'s `running_optimistic`/`cumulative_variable`
+ *   accumulators) — it generally does NOT equal "Variação do mês" past the
+ *   first projected month, and nothing here implies it does (no "→" off the
+ *   rows, no shared total styling with the reconciling line above it).
  *
  * A small `Select` switches which projected month is shown, defaulting to
  * the lowest-point month (or the first projected month when the dip is
@@ -82,6 +83,7 @@ function MonthBreakdown({
     selectedPoint.card_bill_labels,
     variableLookbackMonths,
   );
+  const monthDelta = monthDeltaMinor(rows);
   const options: SelectOption[] = points.map((point) => ({
     value: point.date,
     label: monthOptionLabel(point.date, locale),
@@ -123,13 +125,27 @@ function MonthBreakdown({
         ))}
       </ul>
 
+      {/* "Variação do mês" sums the rows directly above it, and only them —
+          `monthDelta` is computed from those same rows, so this line is
+          guaranteed to reconcile with what they show. `colorBySign`: a
+          genuine delta, not a plain balance (CONVENTIONS §9.1). */}
       <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t border-hairline pt-3 min-w-0">
-        <span className="text-sm text-ink-2">→ saldo</span>
+        <span className="text-sm text-ink-2">Variação do mês</span>
+        <MoneyText minor={monthDelta} currency={currency} colorBySign className="text-base" />
+      </div>
+
+      {/* "Saldo projetado" is a SEPARATE figure — the running end-of-month
+          balance, not a total of the rows/variação above — kept visually
+          distinct with its own divider, a muted eyebrow label, and no arrow
+          implying it's derived from them. `flagNegative`: a plain running
+          balance/total, not a delta (CONVENTIONS §9.1). */}
+      <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t border-hairline pt-3 min-w-0">
+        <span className="text-xs text-ink-faint">Saldo projetado</span>
         <MoneyText
           minor={selectedPoint.realistic_minor}
           currency={currency}
           flagNegative
-          className="text-base"
+          className="text-sm text-ink-2"
         />
       </div>
     </div>

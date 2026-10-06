@@ -4,6 +4,7 @@ import {
   breakdownRows,
   defaultBreakdownDate,
   findPointByDate,
+  monthDeltaMinor,
 } from "./forecastCopy";
 import type { ProjectionComponents, ProjectionPoint } from "./useForecast";
 
@@ -136,5 +137,29 @@ describe("breakdownRows", () => {
       "fatura Nubank",
       "fatura BTG",
     ]);
+  });
+});
+
+describe("monthDeltaMinor", () => {
+  it("sums the signed rows — the month's own net change, nothing else", () => {
+    const point = buildPoint();
+    const rows = breakdownRows(point.components, point.card_bill_labels, 6);
+    // income (+300_000) − subscriptions (5_000) − loans (20_000)
+    // − card bill (15_000) − variable (10_000)
+    expect(monthDeltaMinor(rows)).toBe(250_000);
+  });
+
+  it("is independent of realistic_minor — the running balance it must NOT be derived from", () => {
+    const point = buildPoint({ realistic_minor: 999_999 });
+    const rows = breakdownRows(point.components, point.card_bill_labels, 6);
+    expect(monthDeltaMinor(rows)).toBe(250_000);
+  });
+
+  it("omits a zeroed-out component the same way the rendered rows do", () => {
+    const components = { ...COMPONENTS, loans_minor: 0 };
+    const rows = breakdownRows(components, [], 6);
+    // income (+300_000) − subscriptions (5_000) − card bills (15_000)
+    // − variable (10_000); no loans row to subtract.
+    expect(monthDeltaMinor(rows)).toBe(270_000);
   });
 });

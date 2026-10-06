@@ -5,19 +5,11 @@ import { focusRingClass } from "../../components/ui/a11y";
 import { cn } from "../../lib/cn";
 import { DateText, MoneyText, usePreferences } from "../../lib/preferences";
 import { ChartEmpty, GraphCard } from "../analytics/GraphCard";
-import { biggestCardBillLabel, findPointByDate } from "./forecastCopy";
+import { biggestCardBillLabel, findPointByDate, SIGN_POSITIVE } from "./forecastCopy";
 import MonthBreakdown from "./MonthBreakdown";
 import { ProjectionChart } from "./ProjectionChart";
 import { useProjection } from "./useForecast";
 import type { Projection } from "./useForecast";
-
-/** The lone inflow sign glyph the recovery tile's "De volta ao azul" amount
- * carries — same `SIGN_POSITIVE`/manual-glyph idiom `SafeToSpendCard` and
- * `MonthBreakdown` already use, since `recovery.value_minor` is always >= 0
- * (by definition: it's the balance the day it climbs back out of the red)
- * and `Intl`'s currency formatting never prints a "+" for a positive
- * amount on its own. */
-const SIGN_POSITIVE = "+";
 
 /** The horizon toggle's two options — the only two the brief/endpoint's
  * `months` contract (`ge=1,le=24`) are asked to offer here. */
