@@ -82,7 +82,9 @@ async def fetch_logo(name: str, *, client: httpx.AsyncClient | None = None) -> s
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=_FETCH_TIMEOUT)
     try:
-        resp = await client.get(_FAVICON_URL, params={"domain": domain, "sz": _FAVICON_SIZE})
+        resp = await client.get(
+            _FAVICON_URL, params={"domain": domain, "sz": _FAVICON_SIZE}, follow_redirects=True
+        )
         if resp.status_code != 200:
             return None
         if not resp.headers.get("content-type", "").startswith("image/"):

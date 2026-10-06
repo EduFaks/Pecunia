@@ -102,6 +102,47 @@ async def test_fetch_logo_transport_error_returns_none():
     assert await fetch_logo("Netflix", client=client) is None
 
 
+async def test_fetch_logo_follows_redirects_to_favicon():
+    """Verify that fetch_logo follows HTTP redirects when fetching favicons.
+
+    Real favicon services (e.g., Google s2, DuckDuckGo) return 302/301 redirects
+    before serving the image. This test uses MockTransport to simulate that
+    redirect behavior and verifies that per-request follow_redirects=True works.
+    The client is built with DEFAULT config (no follow_redirects), so the test
+    proves it's the per-request setting in fetch_logo that enables redirects.
+    """
+    png_bytes = b"\x89PNG\r\n\x1a\nfake-but-small-png-bytes"
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First request to favicon URL: return a 302 redirect
+            return httpx.Response(
+                302,
+                headers={"location": "https://cdn.example.com/favicons/netflix.png"}
+            )
+        else:
+            # Redirect request: return the actual favicon image
+            return httpx.Response(
+                200,
+                content=png_bytes,
+                headers={"content-type": "image/png"}
+            )
+
+    # Client with DEFAULT config (follow_redirects=False); the per-request
+    # follow_redirects=True in fetch_logo is what makes this work
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    result = await fetch_logo("Netflix", client=client)
+
+    assert result is not None
+    assert result.startswith("data:image/png;base64,")
+    encoded = result.removeprefix("data:image/png;base64,")
+    assert base64.b64decode(encoded) == png_bytes
+
+
 # --------------------------------------------------------------------------- #
 # Endpoint — GET /subscriptions/brand-logo (unknown-brand path only; a known
 # brand would make a real outbound request, which this suite never does)
