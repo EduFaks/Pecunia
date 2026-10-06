@@ -174,6 +174,26 @@ function SubscriptionsScreen() {
 
       {subscriptions.length > 0 ? <SummaryHeader stats={rollupStats} /> : null}
 
+      {subscriptions.length > 0 && baseTotal.by_category && baseTotal.by_category.length > 0 ? (
+        <Card>
+          <h2 className="font-display text-sm text-ink-2">Monthly spend by category</h2>
+          <ul className="mt-3 flex flex-col gap-2">
+            {baseTotal.by_category.map((row) => (
+              <li
+                key={row.category_id ?? "uncategorized"}
+                className="flex items-center justify-between gap-4 text-sm"
+              >
+                <span className="truncate text-ink">{row.name ?? "Uncategorized"}</span>
+                <span className="font-mono text-xs text-ink-2">
+                  <MoneyText minor={row.monthly_minor} currency={baseCurrency} />
+                  <span className="text-ink-faint"> / mo</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
       <SubscriptionSuggestions
         suggestions={suggestions}
         categoryNameById={categoryNameById}

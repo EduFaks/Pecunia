@@ -253,4 +253,36 @@ describe("SubscriptionsScreen", () => {
     // Renew is meaningless for a canceled subscription.
     expect(within(row).queryByRole("button", { name: /^renew$/i })).not.toBeInTheDocument();
   });
+
+  it("renders the monthly spend by category breakdown when categories are present", async () => {
+    seed([NETFLIX, SPOTIFY], {
+      USD: {
+        monthly_minor: 2599,
+        annual_minor: 31188,
+        count: 2,
+        by_category: [
+          { category_id: "c1", name: "Streaming", monthly_minor: 3000, annual_minor: 36000, count: 2 },
+          { category_id: null, name: null, monthly_minor: 1000, annual_minor: 12000, count: 1 },
+        ],
+      },
+    });
+    renderScreen();
+
+    // Wait for the subscriptions to load
+    await screen.findByText("Netflix");
+
+    // Check the category breakdown card is present
+    const categoryCard = screen.getByText("Monthly spend by category").parentElement!;
+    expect(categoryCard).toBeInTheDocument();
+
+    // Check that the "Streaming" category is rendered with its monthly figure
+    expect(within(categoryCard).getByText("Streaming")).toBeInTheDocument();
+
+    // Find the uncategorized row by looking for "Uncategorized" in the card
+    expect(within(categoryCard).getByText("Uncategorized")).toBeInTheDocument();
+
+    // Both category rows should have monthly values
+    const monthlyValues = within(categoryCard).getAllByText(/\$\d+\.\d{2}/);
+    expect(monthlyValues.length).toBeGreaterThanOrEqual(2);
+  });
 });
