@@ -5,6 +5,7 @@ import { focusRingClass } from "../../components/ui/a11y";
 import { cn } from "../../lib/cn";
 import { DateText, MoneyText, usePreferences } from "../../lib/preferences";
 import { ChartEmpty, GraphCard } from "../analytics/GraphCard";
+import DebtPayoffList from "./DebtPayoffList";
 import { biggestCardBillLabel, findPointByDate, SIGN_POSITIVE } from "./forecastCopy";
 import MonthBreakdown from "./MonthBreakdown";
 import { ProjectionChart } from "./ProjectionChart";
@@ -193,9 +194,12 @@ function RecoveryTile({ projection, currency }: { projection: Projection; curren
  * (`RunwayHero`, above) and the headline two-line chart (`ProjectionChart`).
  *
  * Below the chart: the lowest-point/recovery stat tiles and the per-month
- * `MonthBreakdown` ("o que compõe") — Task 4. Task 5 still owes the
- * debt-payoff list via `useDebtPayoffs` (`./useForecast`) — not implemented
- * here.
+ * `MonthBreakdown` ("o que compõe") — Task 4 — followed by the debt-payoff
+ * list (`DebtPayoffList`, Task 5), which drives its own `useDebtPayoffs`
+ * query independently of the projection above (it's a separate endpoint and
+ * is never per-currency, so it isn't gated behind the projection load at
+ * all — a stalled/erroring projection doesn't block the debt list, and vice
+ * versa).
  */
 function ForecastScreen() {
   const { base_currency, locale } = usePreferences();
@@ -266,11 +270,15 @@ function ForecastScreen() {
             currency={base_currency}
             locale={locale}
           />
-
-          {/* Task 5 slot: the debt-payoff list, driven by `useDebtPayoffs()`
-              from `./useForecast` — not implemented here. */}
         </>
       )}
+
+      {/* Independent of the projection ternary above on purpose (Task 5):
+          `DebtPayoffList` drives its own `useDebtPayoffs()` query, so a
+          stalled/erroring/empty cash projection never hides it, and vice
+          versa — the two sections report on genuinely separate concerns
+          (cash runway vs. debt payoff ETAs). */}
+      <DebtPayoffList />
     </div>
   );
 }

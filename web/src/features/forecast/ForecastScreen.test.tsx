@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import ForecastScreen from "./ForecastScreen";
-import type { Projection } from "./useForecast";
+import type { DebtPayoff, Projection } from "./useForecast";
 
 vi.mock("../../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/api")>();
@@ -18,6 +18,17 @@ const PREFERENCES = {
   number_format: "1,234.56",
   timezone: "UTC",
   first_day_of_week: "monday",
+};
+
+const DEBT_PAYOFF: DebtPayoff = {
+  loan_id: "l1",
+  name: "Financiamento do carro",
+  remaining_minor: 1_200_000,
+  planned_payment_minor: 50_000,
+  payment_frequency: "monthly",
+  currency: "USD",
+  payoff_date: "2027-06-30",
+  payments_left: 24,
 };
 
 const ZERO_COMPONENTS = {
@@ -43,13 +54,19 @@ function buildPoints(count: number): Projection["points"] {
   });
 }
 
-function mockProjection(projection: Projection | Record<string, unknown>) {
+function mockProjection(
+  projection: Projection | Record<string, unknown>,
+  debtPayoffs: unknown[] = [],
+) {
   mockApiFetch.mockReset().mockImplementation((path: string) => {
     if (path === "/auth/me") {
       return Promise.resolve({ user: null, preferences: PREFERENCES });
     }
     if (path.startsWith("/analytics/projection")) {
       return Promise.resolve({ USD: projection });
+    }
+    if (path === "/analytics/debt-payoffs") {
+      return Promise.resolve(debtPayoffs);
     }
     return Promise.reject(new Error(`unexpected path: ${path}`));
   });
@@ -151,6 +168,9 @@ describe("ForecastScreen", () => {
       }
       if (path.startsWith("/analytics/projection")) {
         return Promise.reject(new Error("boom"));
+      }
+      if (path === "/analytics/debt-payoffs") {
+        return Promise.resolve([]);
       }
       return Promise.reject(new Error(`unexpected path: ${path}`));
     });
@@ -308,5 +328,66 @@ describe("ForecastScreen", () => {
     expect(screen.getByText("renda")).toBeInTheDocument();
     expect(screen.getByText("variável médio")).toBeInTheDocument();
     expect(screen.getByText("média de 6 meses")).toBeInTheDocument();
+  });
+
+  it("renders the debt-payoff list (Task 5) alongside the projection", async () => {
+    mockProjection(
+      {
+        currency: "USD",
+        points: buildPoints(6),
+        runway_months: null,
+        runway_until: null,
+        lowest_point: { value_minor: 480_000, date: "2026-11-28" },
+        recovery: null,
+        variable_lookback_months: 6,
+      },
+      [DEBT_PAYOFF],
+    );
+
+    renderScreen();
+
+    expect(await screen.findByText(/quitação de dívidas/i)).toBeInTheDocument();
+    expect(await screen.findByText("Financiamento do carro")).toBeInTheDocument();
+  });
+
+  it("shows the empty-debts note instead of the debt section's card when there are none", async () => {
+    mockProjection({
+      currency: "USD",
+      points: buildPoints(6),
+      runway_months: null,
+      runway_until: null,
+      lowest_point: { value_minor: 480_000, date: "2026-11-28" },
+      recovery: null,
+      variable_lookback_months: 6,
+    });
+
+    renderScreen();
+
+    expect(
+      await screen.findByText(/sem dívidas com pagamento programado/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/quitação de dívidas/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the debt-payoff list even while the cash projection is still loading", async () => {
+    mockApiFetch.mockReset().mockImplementation((path: string) => {
+      if (path === "/auth/me") {
+        return Promise.resolve({ user: null, preferences: PREFERENCES });
+      }
+      if (path === "/analytics/debt-payoffs") {
+        return Promise.resolve([DEBT_PAYOFF]);
+      }
+      if (path.startsWith("/analytics/projection")) {
+        return new Promise(() => {}); // never resolves — projection stays "loading"
+      }
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
+
+    renderScreen();
+
+    // The projection's own card is still showing its loading copy...
+    expect(await screen.findByText(/carregando/i)).toBeInTheDocument();
+    // ...but the independently-fetched debt list is not held hostage by it.
+    expect(await screen.findByText("Financiamento do carro")).toBeInTheDocument();
   });
 });
