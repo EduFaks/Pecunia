@@ -1213,3 +1213,44 @@ async def test_projection_endpoint_rejects_months_outside_one_to_twenty_four(cli
     too_high = await client.get("/api/v1/analytics/projection", params={"months": 25}, headers=h)
     assert too_low.status_code == 422
     assert too_high.status_code == 422
+
+
+# -------------------------------------------------------- debt payoffs
+
+
+async def test_debt_payoffs_endpoint_returns_payoff_eta_per_loan(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    # next_due is tomorrow (relative to the real wall clock the endpoint
+    # reads) and the planned payment fully covers the principal, so the
+    # payoff lands on that very first due date -> payments_left == 1,
+    # regardless of what day the suite happens to run.
+    next_due = _today_utc() + timedelta(days=1)
+    await _due_loan(
+        db, ws_id, name="Car", principal=1_000, planned_payment=1_000,
+        payment_frequency="monthly", next_due=next_due,
+    )
+    # Excluded: a lent loan is a receivable, not a debt.
+    await _due_loan(
+        db, ws_id, name="Lent", direction="lent", principal=1_000, planned_payment=100,
+        payment_frequency="monthly", next_due=next_due,
+    )
+    await db.commit()  # the request runs in its own session
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/debt-payoffs", headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert len(body) == 1
+    entry = body[0]
+    assert {
+        "loan_id", "name", "remaining_minor", "planned_payment_minor",
+        "payment_frequency", "currency", "payoff_date", "payments_left",
+    } <= set(entry)
+    assert entry["name"] == "Car"
+    assert entry["remaining_minor"] == 1_000
+    assert entry["planned_payment_minor"] == 1_000
+    assert entry["payment_frequency"] == "monthly"
+    assert entry["currency"] == "USD"
+    assert entry["payments_left"] == 1
+    assert entry["payoff_date"] == next_due.isoformat()

@@ -206,6 +206,17 @@ class ProjectionOut(BaseModel):
     variable_lookback_months: int
 
 
+class DebtPayoutOut(BaseModel):
+    loan_id: uuid.UUID
+    name: str
+    remaining_minor: int
+    planned_payment_minor: int
+    payment_frequency: str
+    currency: str
+    payoff_date: date | None
+    payments_left: int | None
+
+
 class SafeToSpendOut(BaseModel):
     safe_minor: int
     displayed_safe_minor: int
@@ -331,6 +342,16 @@ async def projection(
     # A pure read (nothing captured/persisted); the wall clock lives here so
     # the service stays clock-free (§4).
     return await ProjectionService(db).project(wsctx.workspace_id, today=_today(), months=months)
+
+
+@router.get("/debt-payoffs")
+async def debt_payoffs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+) -> list[DebtPayoutOut]:
+    # A pure read (nothing captured/persisted); the wall clock lives here so
+    # the service stays clock-free (§4).
+    return await ProjectionService(db).debt_payoffs(wsctx.workspace_id, today=_today())
 
 
 @router.get("/summary")

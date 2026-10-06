@@ -7,15 +7,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pecunia.models.account import Account
 from pecunia.models.bank_sync import BankAccountLink
-from pecunia.models.loan import Loan
+from pecunia.models.loan import Loan, LoanDirection
 from pecunia.models.scheduled_transaction import ScheduledTransaction
 from pecunia.models.subscription import Subscription
 from pecunia.models.transaction import Transaction
-from pecunia.period import current_window, month_end, next_due_on_or_after, shift_month
+from pecunia.period import advance, current_window, month_end, next_due_on_or_after, shift_month
 from pecunia.services.accounts import AccountService
 from pecunia.services.analytics import AnalyticsService
+from pecunia.services.loans import LoanService
 from pecunia.services.recurrence import expand_occurrences
 from pecunia.services.scoping import scoped_select
+
+# Safety cap on the number of payment occurrences `debt_payoffs` will step
+# through before giving up on a loan — guards against an (near-)zero
+# `planned_payment_minor` against a large balance looping effectively
+# forever. 24 mirrors every other "projection horizon" cap in this module/
+# `ForecastService` (`months = max(1, min(months, 24))`): at the common
+# monthly cadence this is exactly 24 months; for weekly/quarterly/yearly
+# loans it is simply 24 occurrences of THAT loan's own schedule, not a
+# fixed calendar horizon — a deliberately simple reading of "24 months of
+# stepping", same as the rest of the codebase keeps these caps as plain
+# iteration counts rather than date arithmetic.
+_PAYOFF_STEP_CAP = 24
 
 # How many months of history the variable (realistic-only) band averages —
 # kept in lock-step with `ForecastService._BAND_LOOKBACK_MONTHS` (same
@@ -199,6 +212,78 @@ class ProjectionService:
                 "variable_lookback_months": _BAND_LOOKBACK_MONTHS,
             }
         return result
+
+    async def debt_payoffs(self, workspace_id: uuid.UUID, *, today: date) -> list[dict]:
+        """A deterministic, no-interest payoff ETA for every BORROWED loan
+        with a full payment schedule set (`planned_payment_minor > 0`,
+        `payment_frequency` and `next_due` all present) — a `lent` loan is a
+        receivable, not a debt, so it is excluded regardless of schedule
+        (mirrors the three-field criterion `project`'s loan bucketing and
+        `AnalyticsService.committed_monthly`/`ForecastService.forecast`
+        already share).
+
+        V1 loans carry no amortization — `LoanService.remaining_minor` is a
+        flat `principal − Σ payments` ledger (CONVENTIONS §4) — and interest
+        is NOT modeled here either: this is a plain "how many more payments
+        at the CURRENT planned amount, from the CURRENT remaining balance"
+        projection, not a real amortization schedule with interest accrual.
+
+        Starting from `next_due` stepped forward (via `period.advance`, the
+        same cadence-preserving rule `expand_occurrences` uses for every
+        other scheduled source) past any occurrence before `today`, each
+        step subtracts `planned_payment_minor` from the loan's current
+        `remaining_minor` until it reaches zero or below — capped at
+        `_PAYOFF_STEP_CAP` occurrences. A loan already at (or past) zero
+        needs no further payments: `payments_left=0`, `payoff_date=today`.
+        Past the cap without reaching zero, `payoff_date`/`payments_left`
+        come back `None` — never paid off at this pace, at least not within
+        a horizon worth projecting."""
+        loan_service = LoanService(self.db)
+        loans = (
+            await self.db.execute(
+                scoped_select(Loan, workspace_id).where(
+                    Loan.direction == LoanDirection.BORROWED,
+                    Loan.planned_payment_minor.is_not(None),
+                    Loan.planned_payment_minor > 0,
+                    Loan.payment_frequency.is_not(None),
+                    Loan.next_due.is_not(None),
+                )
+            )
+        ).scalars().all()
+
+        results: list[dict] = []
+        for loan in loans:
+            remaining_minor = await loan_service.remaining_minor(loan)
+
+            payoff_date: date | None
+            payments_left: int | None
+            if remaining_minor <= 0:
+                payoff_date, payments_left = today, 0
+            else:
+                due = loan.next_due
+                while due < today:
+                    due = advance(due, loan.payment_frequency)
+
+                payoff_date, payments_left = None, None
+                step_remaining = remaining_minor
+                for step in range(1, _PAYOFF_STEP_CAP + 1):
+                    step_remaining -= loan.planned_payment_minor
+                    if step_remaining <= 0:
+                        payoff_date, payments_left = due, step
+                        break
+                    due = advance(due, loan.payment_frequency)
+
+            results.append({
+                "loan_id": loan.id,
+                "name": loan.name,
+                "remaining_minor": remaining_minor,
+                "planned_payment_minor": loan.planned_payment_minor,
+                "payment_frequency": loan.payment_frequency,
+                "currency": loan.currency,
+                "payoff_date": payoff_date,
+                "payments_left": payments_left,
+            })
+        return results
 
     @staticmethod
     def _derive(today: date, start: int, points: list[dict]) -> dict:

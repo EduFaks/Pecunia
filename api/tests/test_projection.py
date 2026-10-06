@@ -8,6 +8,7 @@ from pecunia.models import (
     BankAccountLink,
     BankConnection,
     Loan,
+    LoanPayment,
     ScheduledTransaction,
     Subscription,
     Transaction,
@@ -90,6 +91,16 @@ async def _loan(
     db.add(loan)
     await db.flush()
     return loan
+
+
+async def _payment(db, ws_id, loan, *, amount, paid_on):
+    p = LoanPayment(
+        id=uuid.uuid4(), workspace_id=ws_id, loan_id=loan.id,
+        amount_minor=amount, paid_on=paid_on,
+    )
+    db.add(p)
+    await db.flush()
+    return p
 
 
 async def _card_account(db, ws_id, *, currency="USD", name="Card"):
@@ -514,3 +525,122 @@ async def test_projection_is_workspace_scoped(db, initialized_instance, user_fac
     result = await ProjectionService(db).project(ws_id, today=TODAY, months=1)
 
     assert result["USD"]["points"][0]["optimistic_minor"] == 1_000
+
+
+# --------------------------------------------------------------------------- #
+# debt_payoffs
+# --------------------------------------------------------------------------- #
+
+
+async def test_debt_payoff_steps_until_balance_reaches_zero(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    loan = await _loan(
+        db, ws_id, name="Car", principal=1_000, planned_payment=300,
+        payment_frequency="monthly", next_due=date(2026, 10, 13),
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["loan_id"] == loan.id
+    assert entry["name"] == "Car"
+    assert entry["remaining_minor"] == 1_000
+    assert entry["planned_payment_minor"] == 300
+    assert entry["payment_frequency"] == "monthly"
+    assert entry["currency"] == "USD"
+    # Oct 13 (700 left) -> Nov 13 (400) -> Dec 13 (100) -> Jan 13 2027 (-200,
+    # i.e. <= 0) -> 4 payments to zero.
+    assert entry["payments_left"] == 4
+    assert entry["payoff_date"] == date(2027, 1, 13)
+
+
+async def test_debt_payoff_excludes_loans_missing_any_schedule_field(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _loan(
+        db, ws_id, name="ZeroPayment", principal=1_000, planned_payment=0,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+    await _loan(
+        db, ws_id, name="NoFrequency", principal=1_000, planned_payment=100,
+        payment_frequency=None, next_due=date(2026, 10, 1),
+    )
+    await _loan(
+        db, ws_id, name="NoNextDue", principal=1_000, planned_payment=100,
+        payment_frequency="monthly", next_due=None,
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert result == []
+
+
+async def test_debt_payoff_excludes_lent_loans(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _loan(
+        db, ws_id, name="Lent", direction="lent", principal=1_000, planned_payment=100,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert result == []  # a receivable, not a debt
+
+
+async def test_debt_payoff_caps_at_24_steps_for_a_tiny_payment(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _loan(
+        db, ws_id, name="GlacialLoan", principal=1_000_000, planned_payment=1,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert len(result) == 1
+    assert result[0]["payoff_date"] is None
+    assert result[0]["payments_left"] is None
+    assert result[0]["remaining_minor"] == 1_000_000
+
+
+async def test_debt_payoff_carries_currency_per_loan(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _loan(
+        db, ws_id, name="UsdLoan", currency="USD", principal=500, planned_payment=100,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+    await _loan(
+        db, ws_id, name="EurLoan", currency="EUR", principal=500, planned_payment=100,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    by_name = {e["name"]: e for e in result}
+    assert by_name["UsdLoan"]["currency"] == "USD"
+    assert by_name["EurLoan"]["currency"] == "EUR"
+
+
+async def test_debt_payoff_remaining_reflects_prior_payments(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    loan = await _loan(
+        db, ws_id, name="PartlyPaid", principal=1_000, planned_payment=100,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+    await _payment(db, ws_id, loan, amount=400, paid_on=date(2026, 9, 1))
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert result[0]["remaining_minor"] == 600
+
+
+async def test_debt_payoff_is_workspace_scoped(db, initialized_instance, user_factory):
+    ws_id = await _ws_id(db, initialized_instance)
+    other_ws = await _other_workspace(db, user_factory)
+    await _loan(
+        db, other_ws.id, name="Theirs", principal=1_000, planned_payment=100,
+        payment_frequency="monthly", next_due=date(2026, 10, 1),
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert result == []
