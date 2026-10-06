@@ -15,7 +15,7 @@ function renderTabBar(initialPath: string) {
 }
 
 describe("TabBar", () => {
-  it("renders all five tabs as links to their real routes", () => {
+  it("renders all six tabs as links to their real routes", () => {
     renderTabBar("/");
 
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/");
@@ -24,6 +24,7 @@ describe("TabBar", () => {
       "/transactions",
     );
     expect(screen.getByRole("link", { name: "Insights" })).toHaveAttribute("href", "/insights");
+    expect(screen.getByRole("link", { name: "Previsão" })).toHaveAttribute("href", "/forecast");
     expect(screen.getByRole("link", { name: "Contas" })).toHaveAttribute("href", "/accounts");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
@@ -41,6 +42,17 @@ describe("TabBar", () => {
     renderTabBar("/transactions");
 
     expect(screen.getByRole("link", { name: "Transações" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Insights" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks Previsão active at the /forecast route, and only that one", () => {
+    renderTabBar("/forecast");
+
+    expect(screen.getByRole("link", { name: "Previsão" })).toHaveAttribute(
       "aria-current",
       "page",
     );

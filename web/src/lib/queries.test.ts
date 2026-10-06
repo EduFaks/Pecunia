@@ -53,6 +53,18 @@ describe("qk", () => {
   });
 });
 
+describe("qk.analytics forecast-tab keys (Track V)", () => {
+  it("keys the projection by horizon when given, bare otherwise", () => {
+    expect(qk.analytics.projection()).toEqual(["analytics", "projection"]);
+    expect(qk.analytics.projection(6)).toEqual(["analytics", "projection", { months: 6 }]);
+    expect(qk.analytics.projection(12)).toEqual(["analytics", "projection", { months: 12 }]);
+  });
+
+  it("keys the debt-payoffs list as a single bare slot", () => {
+    expect(qk.analytics.debtPayoffs()).toEqual(["analytics", "debt-payoffs"]);
+  });
+});
+
 describe("financeQueryKeys", () => {
   it("covers every finance-domain listing, and nothing else", () => {
     expect(financeQueryKeys).toEqual([

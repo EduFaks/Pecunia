@@ -38,6 +38,7 @@ function renderShell(initialPath: string) {
           <Route path="insights" element={<div>Insights screen</div>} />
           <Route path="accounts" element={<div>Accounts screen</div>} />
           <Route path="transactions" element={<div>Transactions screen</div>} />
+          <Route path="forecast" element={<div>Forecast screen</div>} />
         <Route path="planned" element={<div>Planned screen</div>} />
           <Route path="projects" element={<div>Projects screen</div>} />
           <Route path="assets" element={<div>Assets screen</div>} />
@@ -87,6 +88,7 @@ describe("AppShell", () => {
       "href",
       "/transactions",
     );
+    expect(nav.getByRole("link", { name: "Previsão" })).toHaveAttribute("href", "/forecast");
     expect(nav.getByRole("link", { name: "Goals" })).toHaveAttribute("href", "/goals");
     expect(nav.getByRole("link", { name: "Contacts" })).toHaveAttribute("href", "/contacts");
     expect(nav.getByRole("link", { name: "Planned" })).toHaveAttribute("href", "/planned");

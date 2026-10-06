@@ -225,6 +225,23 @@ export const qk = {
      * `usePreferences()` consumer, which echoes `instance_state.settings`
      * verbatim, picks up the new value too). */
     safeToSpend: () => ["analytics", "safe-to-spend"] as const,
+    /** The forecast tab's cash projection (`/analytics/projection?months=`,
+     * Track V) — optimistic/realistic daily balance points for the next
+     * `months` months, per currency. Takes the screen's horizon toggle (6 or
+     * 12), riding in the key like `forecast`'s `months` above, so each
+     * horizon is its own cache slot and switching refetches. Still nests
+     * under the shared `["analytics"]` prefix for invalidation. */
+    projection: (months?: number) =>
+      months
+        ? (["analytics", "projection", { months }] as const)
+        : (["analytics", "projection"] as const),
+    /** The forecast tab's debt list (`/analytics/debt-payoffs`, Track V) —
+     * every borrowed loan's projected payoff ETA under its current planned
+     * payment. No reporting window and not per-currency (each row carries
+     * its own currency, never summed, §4), so a single bare slot under the
+     * shared `["analytics"]` prefix, the same shape `upcoming`/`summary`
+     * use. */
+    debtPayoffs: () => ["analytics", "debt-payoffs"] as const,
   },
 
   auditEvents: (filters: AuditEventFilters = {}) => ["audit-events", filters] as const,

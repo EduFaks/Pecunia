@@ -14,6 +14,7 @@ import BudgetsScreen from "./features/budgets/BudgetsScreen";
 import ContactDetail from "./features/contacts/ContactDetail";
 import ContactsScreen from "./features/contacts/ContactsScreen";
 import Dashboard from "./features/dashboard/Dashboard";
+import ForecastScreen from "./features/forecast/ForecastScreen";
 import GoalsScreen from "./features/goals/GoalsScreen";
 import LoanDetail from "./features/loans/LoanDetail";
 import LoansScreen from "./features/loans/LoansScreen";
@@ -97,6 +98,7 @@ function AppRoutes() {
             <Route path="accounts" element={<AccountsScreen />} />
             <Route path="accounts/:id" element={<AccountDetail />} />
             <Route path="transactions" element={<TransactionsScreen />} />
+            <Route path="forecast" element={<ForecastScreen />} />
             <Route path="goals" element={<GoalsScreen />} />
             <Route path="contacts" element={<ContactsScreen />} />
             <Route path="contacts/:id" element={<ContactDetail />} />

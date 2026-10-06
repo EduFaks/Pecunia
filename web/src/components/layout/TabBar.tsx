@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { ArrowLeftRight, LayoutDashboard, PieChart, Settings, Wallet } from "lucide-react";
+import { ArrowLeftRight, LayoutDashboard, PieChart, Settings, TrendingUp, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { focusRingClass } from "../ui/a11y";
@@ -12,16 +12,21 @@ interface TabItem {
 }
 
 /**
- * Five tabs, same icons `AppShell`'s sidebar uses for the matching routes.
+ * Six tabs, same icons `AppShell`'s sidebar uses for the matching routes
+ * (Previsão's `TrendingUp` is its own icon, distinct from the sidebar's
+ * Portfolio `LineChart`, so no two sidebar items share a glyph).
  * Transactions/Accounts carry the dashboard cards' Portuguese copy
  * ("Transações"/"Contas", see `SafeToSpendCard`'s "definir orçamento") since
  * this bar is the app's primary nav on a phone, not an echo of the sidebar's
  * English chrome; Dashboard/Insights/Settings stay the same label either way.
+ * "Previsão" (Track V) is the forecast tab added alongside Insights — both
+ * are the bar's two analytical, non-CRUD screens.
  */
 const TABS: TabItem[] = [
   { label: "Dashboard", to: "/", end: true, icon: LayoutDashboard },
   { label: "Transações", to: "/transactions", end: false, icon: ArrowLeftRight },
   { label: "Insights", to: "/insights", end: false, icon: PieChart },
+  { label: "Previsão", to: "/forecast", end: false, icon: TrendingUp },
   { label: "Contas", to: "/accounts", end: false, icon: Wallet },
   { label: "Settings", to: "/settings", end: false, icon: Settings },
 ];
