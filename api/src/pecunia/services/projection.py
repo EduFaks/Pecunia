@@ -18,17 +18,22 @@ from pecunia.services.loans import LoanService
 from pecunia.services.recurrence import expand_occurrences
 from pecunia.services.scoping import scoped_select
 
-# Safety cap on the number of payment occurrences `debt_payoffs` will step
-# through before giving up on a loan — guards against an (near-)zero
-# `planned_payment_minor` against a large balance looping effectively
-# forever. 24 mirrors every other "projection horizon" cap in this module/
-# `ForecastService` (`months = max(1, min(months, 24))`): at the common
-# monthly cadence this is exactly 24 months; for weekly/quarterly/yearly
-# loans it is simply 24 occurrences of THAT loan's own schedule, not a
-# fixed calendar horizon — a deliberately simple reading of "24 months of
-# stepping", same as the rest of the codebase keeps these caps as plain
-# iteration counts rather than date arithmetic.
-_PAYOFF_STEP_CAP = 24
+# `debt_payoffs` steps a loan's own payment schedule forward until the
+# balance clears, or gives up past this horizon. 24 mirrors every other
+# "projection horizon" cap in this module/`ForecastService`
+# (`months = max(1, min(months, 24))`): a fixed 24-CALENDAR-MONTH window
+# from `today` (via `period.shift_month`), independent of the loan's
+# `payment_frequency` — a monthly loan still steps ~24 times, same as
+# before, but a weekly/quarterly/yearly loan now gets the full 24 months
+# of real time instead of being cut off after 24 occurrences of its OWN
+# cadence (e.g. ~5.5 months for a weekly loan).
+_PAYOFF_HORIZON_MONTHS = 24
+
+# Belt-and-suspenders ceiling on the number of stepping iterations,
+# independent of the horizon check above — guards against looping
+# effectively forever if `due` ever failed to advance; the horizon date is
+# always the real cutoff, this is only a safety net.
+_PAYOFF_STEP_HARD_CAP = 2000
 
 # How many months of history the variable (realistic-only) band averages —
 # kept in lock-step with `ForecastService._BAND_LOOKBACK_MONTHS` (same
@@ -233,11 +238,15 @@ class ProjectionService:
         other scheduled source) past any occurrence before `today`, each
         step subtracts `planned_payment_minor` from the loan's current
         `remaining_minor` until it reaches zero or below — capped at
-        `_PAYOFF_STEP_CAP` occurrences. A loan already at (or past) zero
-        needs no further payments: `payments_left=0`, `payoff_date=today`.
-        Past the cap without reaching zero, `payoff_date`/`payments_left`
-        come back `None` — never paid off at this pace, at least not within
-        a horizon worth projecting."""
+        `_PAYOFF_HORIZON_MONTHS` CALENDAR months from `today`
+        (`period.shift_month`), not a fixed number of occurrences: a
+        monthly loan still gets ~24 steps, but weekly/quarterly/yearly
+        loans get the full 24-month window rather than 24 of their own
+        occurrences. A loan already at (or past) zero needs no further
+        payments: `payments_left=0`, `payoff_date=today`. Past the horizon
+        without reaching zero, `payoff_date`/`payments_left` come back
+        `None` — never paid off at this pace, at least not within a
+        horizon worth projecting."""
         loan_service = LoanService(self.db)
         loans = (
             await self.db.execute(
@@ -264,9 +273,12 @@ class ProjectionService:
                 while due < today:
                     due = advance(due, loan.payment_frequency)
 
+                horizon_end = shift_month(today, _PAYOFF_HORIZON_MONTHS)
                 payoff_date, payments_left = None, None
                 step_remaining = remaining_minor
-                for step in range(1, _PAYOFF_STEP_CAP + 1):
+                step = 0
+                while due <= horizon_end and step < _PAYOFF_STEP_HARD_CAP:
+                    step += 1
                     step_remaining -= loan.planned_payment_minor
                     if step_remaining <= 0:
                         payoff_date, payments_left = due, step

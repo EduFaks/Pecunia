@@ -602,6 +602,24 @@ async def test_debt_payoff_caps_at_24_steps_for_a_tiny_payment(db, initialized_i
     assert result[0]["remaining_minor"] == 1_000_000
 
 
+async def test_debt_payoff_weekly_loan_uses_24_month_calendar_horizon(db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    # Weekly, 100/week against a 4,000 balance -> exactly 40 weekly payments
+    # (~9 months from `next_due`), comfortably inside a 24-MONTH calendar
+    # horizon but well past 24 weekly OCCURRENCES (~5.5 months) — the
+    # distinction this test pins down.
+    await _loan(
+        db, ws_id, name="WeeklyLoan", principal=4_000, planned_payment=100,
+        payment_frequency="weekly", next_due=date(2026, 9, 20),
+    )
+
+    result = await ProjectionService(db).debt_payoffs(ws_id, today=TODAY)
+
+    assert len(result) == 1
+    assert result[0]["payments_left"] == 40
+    assert result[0]["payoff_date"] == date(2027, 6, 20)
+
+
 async def test_debt_payoff_carries_currency_per_loan(db, initialized_instance):
     ws_id = await _ws_id(db, initialized_instance)
     await _loan(
