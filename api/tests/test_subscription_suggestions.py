@@ -1,8 +1,6 @@
 import uuid
 from datetime import date
 
-import pytest
-
 from pecunia.models import Account
 from pecunia.services.subscriptions import SubscriptionService
 from pecunia.services.transactions import TransactionService

@@ -16,6 +16,7 @@ import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 
 from pecunia import period
 
@@ -96,7 +97,7 @@ def _infer_frequency(days: list[date]) -> str | None:
     if len(days) < 2:
         return None
     ordered = sorted(days)
-    gaps = [(b - a).days for a, b in zip(ordered, ordered[1:])]
+    gaps = [(b - a).days for a, b in pairwise(ordered)]
     median_gap = statistics.median(gaps)
     freq = _bucket_for(round(median_gap))
     if freq is None:
@@ -162,12 +163,11 @@ def detect_candidates(
     return candidates
 
 
-import sqlalchemy as sa  # noqa: E402  (grouped here to keep the pure core import-light)
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from pecunia.models.subscription import Subscription, SubscriptionStatus  # noqa: E402
-from pecunia.models.transaction import Transaction  # noqa: E402
-from pecunia.services.scoping import scoped_select  # noqa: E402
+from pecunia.models.subscription import Subscription, SubscriptionStatus
+from pecunia.models.transaction import Transaction
+from pecunia.services.scoping import scoped_select
 
 
 class SubscriptionDetector:

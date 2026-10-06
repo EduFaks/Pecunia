@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -236,7 +236,7 @@ async def subscription_suggestions(
     wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
 ) -> list[SubscriptionSuggestionOut]:
     detector = SubscriptionDetector(db)
-    candidates = await detector.suggest(wsctx.workspace_id, today=date.today())
+    candidates = await detector.suggest(wsctx.workspace_id, today=datetime.now(UTC).date())
     return [
         SubscriptionSuggestionOut(
             merchant=c.merchant,

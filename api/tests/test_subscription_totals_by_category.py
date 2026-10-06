@@ -1,9 +1,5 @@
-import uuid
-from datetime import date
 
 from pecunia.models import PALETTE
-from pecunia.services.subscriptions import SubscriptionService
-
 
 LOGIN = {"email": "owner@example.com", "password": "correct horse battery staple"}
 
@@ -43,7 +39,6 @@ async def test_subscription_totals_by_category(client, initialized_instance):
 
     # Create two categories
     cat_a = await _category(client, h, name="A")
-    cat_b = await _category(client, h, name="B")
 
     # Seed subscriptions in one currency:
     # - Two monthly subs in category A: 1000 + 2000 = 3000/mo
