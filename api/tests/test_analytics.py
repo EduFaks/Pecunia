@@ -1160,3 +1160,56 @@ async def test_safe_to_spend_endpoint_returns_per_currency_shape(client, db, ini
     assert brl["committed_other_minor"] == brl["committed_remaining_minor"]
     assert brl["projected_income_minor"] == brl["expected_income_minor"]
     assert brl["projected_expense_minor"] == brl["spent_mtd_minor"] + brl["committed_remaining_minor"]
+
+
+# -------------------------------------------------------------- projection
+
+
+async def test_projection_endpoint_returns_per_currency_shape(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    acc = await _account(db, ws_id, currency="USD", initial=10_000)
+    await _scheduled(
+        db, ws_id, acc, description="Salary", amount=5_000,
+        next_due=_today_utc() + timedelta(days=1),
+    )
+    await db.commit()  # the request runs in its own session
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/projection", params={"months": 2}, headers=h)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "USD" in body
+    usd = body["USD"]
+    assert usd["currency"] == "USD"
+    assert len(usd["points"]) == 2
+    assert usd["variable_lookback_months"] == 6
+    assert {"runway_months", "runway_until", "lowest_point", "recovery"} <= set(usd)
+    assert {"value_minor", "date"} <= set(usd["lowest_point"])
+    first = usd["points"][0]
+    assert {"date", "optimistic_minor", "realistic_minor", "components", "card_bill_labels"} <= set(first)
+    assert {
+        "income_minor", "subscriptions_minor", "loans_minor", "card_bills_minor", "variable_minor",
+    } <= set(first["components"])
+
+
+async def test_projection_endpoint_defaults_to_six_months(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD")
+    await db.commit()
+    h = await _auth(client)
+
+    resp = await client.get("/api/v1/analytics/projection", headers=h)
+    assert resp.status_code == 200
+    assert len(resp.json()["USD"]["points"]) == 6
+
+
+async def test_projection_endpoint_rejects_months_outside_one_to_twenty_four(client, db, initialized_instance):
+    ws_id = await _ws_id(db, initialized_instance)
+    await _account(db, ws_id, currency="USD")
+    await db.commit()
+    h = await _auth(client)
+
+    too_low = await client.get("/api/v1/analytics/projection", params={"months": 0}, headers=h)
+    too_high = await client.get("/api/v1/analytics/projection", params={"months": 25}, headers=h)
+    assert too_low.status_code == 422
+    assert too_high.status_code == 422

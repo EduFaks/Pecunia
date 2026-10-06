@@ -11,6 +11,7 @@ from pecunia.db import get_db
 from pecunia.period import shift_month
 from pecunia.services.analytics import AnalyticsService
 from pecunia.services.forecast import ForecastService
+from pecunia.services.projection import ProjectionService
 from pecunia.services.safe_to_spend import SafeToSpendService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depends(require_initialized)])
@@ -164,6 +165,47 @@ class SummaryOut(BaseModel):
     net_worth_change: NetWorthChangeOut
 
 
+class CardBillLabel(BaseModel):
+    label: str
+    amount_minor: int
+
+
+class ProjectionComponents(BaseModel):
+    income_minor: int
+    subscriptions_minor: int
+    loans_minor: int
+    card_bills_minor: int
+    variable_minor: int
+
+
+class ProjectionPoint(BaseModel):
+    date: date
+    optimistic_minor: int
+    realistic_minor: int
+    components: ProjectionComponents
+    card_bill_labels: list[CardBillLabel]
+
+
+class PointMarker(BaseModel):
+    value_minor: int
+    date: date
+
+
+class Recovery(BaseModel):
+    date: date
+    value_minor: int
+
+
+class ProjectionOut(BaseModel):
+    currency: str
+    points: list[ProjectionPoint]
+    runway_months: int | None
+    runway_until: date | None
+    lowest_point: PointMarker
+    recovery: Recovery | None
+    variable_lookback_months: int
+
+
 class SafeToSpendOut(BaseModel):
     safe_minor: int
     displayed_safe_minor: int
@@ -278,6 +320,17 @@ async def forecast(
     # A pure read (nothing captured/persisted); the wall clock lives here so
     # the service stays clock-free (§4).
     return await ForecastService(db).forecast(wsctx.workspace_id, today=_today(), months=months)
+
+
+@router.get("/projection")
+async def projection(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    wsctx: Annotated[WorkspaceContext, Depends(require_workspace)],
+    months: Annotated[int, Query(ge=1, le=24)] = 6,
+) -> dict[str, ProjectionOut]:
+    # A pure read (nothing captured/persisted); the wall clock lives here so
+    # the service stays clock-free (§4).
+    return await ProjectionService(db).project(wsctx.workspace_id, today=_today(), months=months)
 
 
 @router.get("/summary")
