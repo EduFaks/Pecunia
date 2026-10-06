@@ -75,6 +75,7 @@ export interface DebtPayoff {
   loan_id: string;
   name: string;
   remaining_minor: number;
+  principal_minor: number;
   planned_payment_minor: number;
   payment_frequency: string;
   currency: string;

@@ -17,10 +17,11 @@ const PAYOFF_HORIZON_MONTHS = 24;
  * One debt's progress bar — same visual contract as `LoanPayoffBar`'s own
  * track/fill (`bg-surface-2` track, `bg-accent` fill): a payoff bar is
  * progress toward something the user is acting on, the CONVENTIONS §9.1
- * carve-out that lets it use the accent outside an interactive control.
- * Rendered at a genuine 0% (empty track, no fabricated fill) when the debt
- * isn't projected to clear within the horizon at all — honestly "no
- * progress visible", not a guess.
+ * carve-out that lets it use the accent outside an interactive control. The
+ * fill is the TRUE "% of the debt paid off" (`debtPayoffFraction`, ./debtPayoff),
+ * independent of whether it's projected to clear within the server's
+ * horizon — a debt that "não quita em 24 meses" can still show real
+ * progress already made, rather than reading as a flat, misleading 0%.
  */
 function PayoffBar({ fraction, label }: { fraction: number; label: string }) {
   const percent = Math.round(fraction * 100);
@@ -43,7 +44,7 @@ function PayoffBar({ fraction, label }: { fraction: number; label: string }) {
 
 function DebtPayoffRow({ debt }: { debt: DebtPayoff }) {
   const known = debt.payoff_date !== null && debt.payments_left !== null;
-  const fraction = known ? debtPayoffFraction(debt.payments_left as number) : 0;
+  const fraction = debtPayoffFraction(debt.principal_minor, debt.remaining_minor);
 
   return (
     <li className="flex flex-col gap-2 py-3 min-w-0">

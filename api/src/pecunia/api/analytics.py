@@ -210,6 +210,7 @@ class DebtPayoutOut(BaseModel):
     loan_id: uuid.UUID
     name: str
     remaining_minor: int
+    principal_minor: int
     planned_payment_minor: int
     payment_frequency: str
     currency: str

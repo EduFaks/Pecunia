@@ -246,7 +246,13 @@ class ProjectionService:
         payments: `payments_left=0`, `payoff_date=today`. Past the horizon
         without reaching zero, `payoff_date`/`payments_left` come back
         `None` — never paid off at this pace, at least not within a
-        horizon worth projecting."""
+        horizon worth projecting.
+
+        Each entry also carries the loan's own `principal_minor` (already
+        loaded with the loan, no extra query) so the frontend can show a
+        true "% of the debt paid off" bar (`(principal − remaining) /
+        principal`) instead of a `1 / payments_left` stand-in that read as
+        "% complete" but meant something else entirely."""
         loan_service = LoanService(self.db)
         loans = (
             await self.db.execute(
@@ -289,6 +295,7 @@ class ProjectionService:
                 "loan_id": loan.id,
                 "name": loan.name,
                 "remaining_minor": remaining_minor,
+                "principal_minor": loan.principal_minor,
                 "planned_payment_minor": loan.planned_payment_minor,
                 "payment_frequency": loan.payment_frequency,
                 "currency": loan.currency,

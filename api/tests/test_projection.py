@@ -546,6 +546,7 @@ async def test_debt_payoff_steps_until_balance_reaches_zero(db, initialized_inst
     assert entry["loan_id"] == loan.id
     assert entry["name"] == "Car"
     assert entry["remaining_minor"] == 1_000
+    assert entry["principal_minor"] == 1_000
     assert entry["planned_payment_minor"] == 300
     assert entry["payment_frequency"] == "monthly"
     assert entry["currency"] == "USD"

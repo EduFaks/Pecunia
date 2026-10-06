@@ -6,30 +6,24 @@
  * `forecastCopy.ts` already make.
  */
 
+import { payoffProgress } from "../loans/payoff";
+
 /**
- * A debt row's payoff-progress fraction (0–1) — deliberately NOT
- * `payoff.ts`'s `payoffProgress` (paid/principal), because `DebtPayoff`
- * (`./useForecast`) carries no principal at all: `remaining_minor` is the
- * current flat ledger balance (CONVENTIONS §4, same shape as
- * `LoanOut.remaining_minor`), so there is no honest "paid" figure to divide
- * by an original amount this endpoint never returns. `payoff.ts`'s own
- * docstring says as much for this exact situation — "if principal isn't
- * available, a remaining-only bar is fine — keep it honest; don't invent a
- * principal."
+ * A debt row's TRUE payoff-progress fraction (0–1): `(principal_minor −
+ * remaining_minor) / principal_minor`, i.e. how much of the original debt
+ * has actually been paid off — not a stand-in like "how close is the next
+ * payment to clearing it" (that read as a standard "% complete" bar while
+ * meaning something else entirely; see git history for the earlier
+ * `1 / paymentsLeft` version this replaces).
  *
- * Instead: `1 / paymentsLeft` — the fraction of the remaining PAYMENT COUNT
- * that the very next payment alone knocks out. One payment left reads as a
- * full bar (the next payment finishes it); many payments left read as a
- * thin sliver. This needs no principal and no paid-total, nothing beyond
- * the one field the server already computed — it isn't "% of debt paid
- * off", it's "how close is the finish line", which is the only progress
- * notion these fields can honestly support. `paymentsLeft <= 0` (already
- * clear as of today) also reads as a full bar — there is nothing left to
- * pay down.
+ * `DebtPayoff` (`./useForecast`) now carries `principal_minor` alongside the
+ * flat `remaining_minor` ledger balance (CONVENTIONS §4), so the paid total
+ * is simply `principal_minor − remaining_minor` — reusing
+ * `features/loans/payoff.ts`'s `payoffProgress` for the actual percent/clamp
+ * math (same formula, same 0–100 clamp, same `principal_minor <= 0` guard)
+ * rather than duplicating it here.
  */
-export function debtPayoffFraction(paymentsLeft: number): number {
-  if (paymentsLeft <= 0) {
-    return 1;
-  }
-  return Math.max(0, Math.min(1, 1 / paymentsLeft));
+export function debtPayoffFraction(principalMinor: number, remainingMinor: number): number {
+  const paidTotalMinor = principalMinor - remainingMinor;
+  return payoffProgress(paidTotalMinor, principalMinor, remainingMinor).percent / 100;
 }

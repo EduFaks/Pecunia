@@ -29,6 +29,7 @@ const PAID_OVER_TIME: DebtPayoff = {
   loan_id: "l1",
   name: "Financiamento do carro",
   remaining_minor: 1_200_000,
+  principal_minor: 4_800_000,
   planned_payment_minor: 50_000,
   payment_frequency: "monthly",
   currency: "USD",
@@ -40,6 +41,7 @@ const NEVER_CLEARS: DebtPayoff = {
   loan_id: "l2",
   name: "Cartão renegociado",
   remaining_minor: 9_000_000,
+  principal_minor: 10_000_000,
   planned_payment_minor: 10_000,
   payment_frequency: "monthly",
   currency: "USD",
@@ -77,12 +79,13 @@ describe("DebtPayoffList", () => {
     expect(screen.getByText(/24×/)).toBeInTheDocument();
     expect(screen.getByText("$500.00")).toBeInTheDocument(); // planned payment
 
-    // 24 payments left -> fraction 1/24 ~= 4.17%, rounded to 4 for the a11y value.
+    // True paid fraction: (principal 4,800,000 - remaining 1,200,000) /
+    // 4,800,000 = 75% of the debt already paid off — NOT 1/payments_left.
     const bar = screen.getByRole("progressbar", { name: /financiamento do carro/i });
-    expect(bar).toHaveAttribute("aria-valuenow", "4");
+    expect(bar).toHaveAttribute("aria-valuenow", "75");
   });
 
-  it("shows the no-payoff-within-horizon copy when payoff_date is null", async () => {
+  it("shows the no-payoff-within-horizon copy when payoff_date is null, but still shows true paid progress", async () => {
     mockDebtPayoffs([NEVER_CLEARS]);
 
     renderWithQuery(<DebtPayoffList />);
@@ -90,6 +93,12 @@ describe("DebtPayoffList", () => {
     expect(await screen.findByText("Cartão renegociado")).toBeInTheDocument();
     expect(screen.getByText(/não quita em 24 meses/i)).toBeInTheDocument();
     expect(screen.queryByText(/quitado em/i)).not.toBeInTheDocument();
+
+    // True paid fraction: (principal 10,000,000 - remaining 9,000,000) /
+    // 10,000,000 = 10% paid off, even though it won't clear within the
+    // horizon at this pace.
+    const bar = screen.getByRole("progressbar", { name: /cartão renegociado/i });
+    expect(bar).toHaveAttribute("aria-valuenow", "10");
   });
 
   it("hides the section and shows a one-line note when there are no debts", async () => {

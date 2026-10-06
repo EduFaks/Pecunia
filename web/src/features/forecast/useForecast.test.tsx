@@ -163,6 +163,7 @@ describe("useDebtPayoffs", () => {
     loan_id: "l1",
     name: "Financiamento do carro",
     remaining_minor: 1_200_000,
+    principal_minor: 4_800_000,
     planned_payment_minor: 50_000,
     payment_frequency: "monthly",
     currency: "USD",

@@ -1244,11 +1244,12 @@ async def test_debt_payoffs_endpoint_returns_payoff_eta_per_loan(client, db, ini
     assert len(body) == 1
     entry = body[0]
     assert {
-        "loan_id", "name", "remaining_minor", "planned_payment_minor",
+        "loan_id", "name", "remaining_minor", "principal_minor", "planned_payment_minor",
         "payment_frequency", "currency", "payoff_date", "payments_left",
     } <= set(entry)
     assert entry["name"] == "Car"
     assert entry["remaining_minor"] == 1_000
+    assert entry["principal_minor"] == 1_000
     assert entry["planned_payment_minor"] == 1_000
     assert entry["payment_frequency"] == "monthly"
     assert entry["currency"] == "USD"
